@@ -1,0 +1,127 @@
+name: Build & Release
+
+# Satu file untuk dua keperluan:
+#  1) Push tag "v*" (mis. v1.0.0) atau jalankan manual -> build APK + buat GitHub Release.
+#  2) Push biasa ke branch -> jika ada WebCloner.zip di root repo, otomatis diekstrak
+#     (berguna jika Anda hanya punya HP dan mengunggah proyek sebagai satu file ZIP).
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag rilis, contoh: v1.0.0'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------------------------------------------------------------- ekstrak ZIP
+  unpack:
+    if: github.event_name == 'push' && github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ekstrak WebCloner.zip jika ada
+        run: |
+          if [ ! -f WebCloner.zip ]; then
+            echo "Tidak ada WebCloner.zip, dilewati."
+            exit 0
+          fi
+          unzip -q -o WebCloner.zip -x '.github/*' '__MACOSX/*'
+          rm -f WebCloner.zip
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Ekstrak WebCloner.zip" || exit 0
+          git push
+
+  # ---------------------------------------------------------------- build + rilis
+  release:
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tentukan versi
+        id: ver
+        env:
+          EVENT: ${{ github.event_name }}
+          TAG_INPUT: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then TAG="$TAG_INPUT"; else TAG="$REF_NAME"; fi
+          if ! echo "$TAG" | grep -Eq '^v[0-9]+(\.[0-9]+){0,3}([-.][0-9A-Za-z.]+)?$'; then
+            echo "Format tag tidak valid: $TAG (contoh benar: v1.0.0)"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "name=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Siapkan keystore penandatangan
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD_SECRET: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS_SECRET: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD_SECRET: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          KS="$RUNNER_TEMP/release.jks"
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$KS"
+            STORE_PASS="$KEYSTORE_PASSWORD_SECRET"
+            ALIAS="$KEY_ALIAS_SECRET"
+            KEY_PASS="${KEY_PASSWORD_SECRET:-$KEYSTORE_PASSWORD_SECRET}"
+          else
+            echo "::warning::Secret KEYSTORE_BASE64 belum diatur. APK ditandatangani dengan kunci sementara; update antar-rilis akan gagal dan harus uninstall dulu."
+            STORE_PASS="$(openssl rand -hex 16)"
+            ALIAS="webcloner"
+            KEY_PASS="$STORE_PASS"
+            keytool -genkeypair -keystore "$KS" -storetype PKCS12 \
+              -alias "$ALIAS" -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$STORE_PASS" -keypass "$KEY_PASS" \
+              -dname "CN=Web Cloner, O=JRXRezkyy, C=ID"
+          fi
+          echo "::add-mask::$STORE_PASS"
+          echo "::add-mask::$KEY_PASS"
+          {
+            echo "KEYSTORE_FILE=$KS"
+            echo "KEYSTORE_PASSWORD=$STORE_PASS"
+            echo "KEY_ALIAS=$ALIAS"
+            echo "KEY_PASSWORD=$KEY_PASS"
+          } >> "$GITHUB_ENV"
+
+      - name: Build APK release
+        env:
+          VERSION_NAME: ${{ steps.ver.outputs.name }}
+          VERSION_CODE: ${{ github.run_number }}
+        run: gradle assembleRelease --stacktrace
+
+      - name: Beri nama APK
+        run: |
+          APK="$(ls app/build/outputs/apk/release/*.apk | head -n1)"
+          cp "$APK" "WebCloner-${{ steps.ver.outputs.tag }}.apk"
+          ls -l WebCloner-*.apk
+
+      - name: Buat GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Web Cloner ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true
+          files: WebCloner-${{ steps.ver.outputs.tag }}.apk
