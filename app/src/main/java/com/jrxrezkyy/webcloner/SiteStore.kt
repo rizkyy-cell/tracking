@@ -6,10 +6,21 @@ import android.graphics.BitmapFactory
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.UUID
 
-data class Site(val url: String, val name: String)
+/**
+ * Satu "akun" = satu entri. Domain yang sama boleh punya banyak entri; masing-masing
+ * memakai profil WebView sendiri sehingga login dan cookie-nya terpisah.
+ *
+ * @param num nomor urut akun untuk domain ini (1, 2, 3, ...), dipakai sebagai lencana ikon.
+ */
+data class Site(val id: String, val url: String, val name: String, val num: Int) {
+    val host: String get() = UrlUtils.host(url)
+    val profile: String get() = "acc_$id"
+    val badge: String? get() = if (num > 1) num.toString() else null
+}
 
-/** Penyimpanan daftar situs, ikon (favicon), dan preferensi per situs. */
+/** Penyimpanan daftar akun, ikon (favicon), dan preferensi. */
 object SiteStore {
 
     private const val PREFS = "webcloner"
@@ -26,7 +37,9 @@ object SiteStore {
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
                 val url = o.getString("url")
-                result.add(Site(url, o.optString("name", UrlUtils.host(url))))
+                val id = o.optString("id").ifBlank { "l" + Integer.toHexString(url.hashCode()) }
+                val name = o.optString("name", UrlUtils.host(url))
+                result.add(Site(id, url, name, o.optInt("num", 1)))
             }
             result
         } catch (e: Exception) {
@@ -37,29 +50,47 @@ object SiteStore {
     private fun save(c: Context, list: List<Site>) {
         val arr = JSONArray()
         for (s in list) {
-            arr.put(JSONObject().put("url", s.url).put("name", s.name))
+            arr.put(
+                JSONObject()
+                    .put("id", s.id)
+                    .put("url", s.url)
+                    .put("name", s.name)
+                    .put("num", s.num)
+            )
         }
         prefs(c).edit().putString(KEY_SITES, arr.toString()).apply()
     }
 
-    fun contains(c: Context, url: String): Boolean {
+    fun get(c: Context, id: String): Site? = all(c).firstOrNull { it.id == id }
+
+    fun countForHost(c: Context, host: String): Int = all(c).count { it.host == host }
+
+    /** Membuat akun baru untuk [url]. Selalu membuat entri baru, tidak menimpa yang lama. */
+    fun create(c: Context, url: String): Site {
         val host = UrlUtils.host(url)
-        return all(c).any { UrlUtils.host(it.url) == host }
-    }
-
-    /** Menambahkan situs ke urutan teratas; situs dengan host sama diganti. */
-    fun add(c: Context, site: Site) {
-        val host = UrlUtils.host(site.url)
-        val list = all(c).filterNot { UrlUtils.host(it.url) == host }.toMutableList()
-        list.add(0, site)
+        val list = all(c).toMutableList()
+        val num = (list.filter { it.host == host }.maxOfOrNull { it.num } ?: 0) + 1
+        val name = if (num == 1) host else "$host $num"
+        val site = Site(UUID.randomUUID().toString().replace("-", ""), url, name, num)
+        list.add(site)
         save(c, list)
+        return site
     }
 
+    fun rename(c: Context, id: String, newName: String) {
+        val clean = newName.trim()
+        if (clean.isEmpty()) return
+        save(c, all(c).map { if (it.id == id) it.copy(name = clean) else it })
+    }
+
+    /** Menghapus akun beserta seluruh data login-nya. */
     fun remove(c: Context, site: Site) {
-        save(c, all(c).filterNot { it.url == site.url })
+        save(c, all(c).filterNot { it.id == site.id })
+        prefs(c).edit().remove("desktop_${site.id}").apply()
+        Profiles.delete(site)
     }
 
-    // ---- Favicon ----
+    // ---- Favicon (per domain) ----
 
     private fun faviconFile(c: Context, host: String): File {
         val dir = File(c.filesDir, "favicons")
@@ -84,11 +115,11 @@ object SiteStore {
 
     // ---- Preferensi ----
 
-    fun isDesktop(c: Context, host: String): Boolean =
-        prefs(c).getBoolean("desktop_$host", false)
+    fun isDesktop(c: Context, id: String): Boolean =
+        prefs(c).getBoolean("desktop_$id", false)
 
-    fun setDesktop(c: Context, host: String, value: Boolean) {
-        prefs(c).edit().putBoolean("desktop_$host", value).apply()
+    fun setDesktop(c: Context, id: String, value: Boolean) {
+        prefs(c).edit().putBoolean("desktop_$id", value).apply()
     }
 
     fun pullRefresh(c: Context): Boolean = prefs(c).getBoolean(KEY_PULL_REFRESH, true)

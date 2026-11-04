@@ -30,12 +30,11 @@ class SiteAdapter(
     override fun onBindViewHolder(holder: VH, position: Int) {
         val site = items[position]
         val ctx = holder.itemView.context
-        val host = UrlUtils.host(site.url)
 
         holder.binding.siteName.text = site.name
         holder.binding.siteUrl.text = site.url
         holder.binding.siteIcon.setImageBitmap(
-            IconFactory.create(host, SiteStore.favicon(ctx, host), 96)
+            IconFactory.create(site.host, SiteStore.favicon(ctx, site.host), 96, site.badge)
         )
         holder.binding.root.setOnClickListener { onOpen(site) }
         holder.binding.menuButton.setOnClickListener { onMenu(site, it) }

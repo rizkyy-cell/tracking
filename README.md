@@ -6,7 +6,9 @@ seperti aplikasi sendiri, login Anda tersimpan, dan bisa ditambahkan ke layar ut
 ## Fitur
 - Input domain/URL -> otomatis `https://`; teks biasa dicari di Google
 - Sesi login persisten (cookie & penyimpanan web), termasuk cookie pihak ketiga untuk SSO
-- Daftar situs tersimpan + ikon (favicon) + pintasan layar utama
+- Banyak akun per situs: tiap akun punya login/cookie sendiri (profil WebView terpisah),
+  jadi 5 akun TikTok bisa aktif bersamaan; ganti nama, hapus, dan beri ikon berlencana angka
+- Daftar akun tersimpan + ikon (favicon) + pintasan layar utama
 - Setiap situs tampil sebagai kartu terpisah di Recents
 - Tarik untuk muat ulang (bisa dimatikan), mode desktop per situs
 - Unggah file, unduhan, video layar penuh, kamera/mikrofon/lokasi (dengan konfirmasi)
@@ -34,6 +36,7 @@ Simpan `release.jks` di tempat aman; jangan commit ke repo.
 ## Batasan
 - Ini pembungkus WebView, bukan salinan aplikasi asli. Fitur native situs tidak ada.
 - Login Google/Gmail sering diblokir di WebView (kebijakan Google); tidak ada solusi andal.
-- Semua situs berbagi satu penyimpanan cookie; akun yang sama di situs sama tidak bisa dobel.
+- Banyak akun terpisah butuh "Android System WebView" versi baru (dari Play Store). Jika tidak
+  didukung, semua akun berbagi satu penyimpanan login dan aplikasi menampilkan peringatan.
 - Unduhan `blob:`/`data:` belum didukung.
 - Pastikan Anda mematuhi syarat layanan situs yang dibuka.

@@ -8,22 +8,20 @@ import androidx.core.graphics.drawable.IconCompat
 
 object ShortcutHelper {
 
-    /** Meminta launcher menambahkan ikon situs ke layar utama. */
-    fun pin(context: Context, url: String, title: String) {
+    /** Meminta launcher menambahkan ikon akun ini ke layar utama. */
+    fun pin(context: Context, site: Site) {
         if (!ShortcutManagerCompat.isRequestPinShortcutSupported(context)) {
             Toast.makeText(context, R.string.shortcut_unsupported, Toast.LENGTH_LONG).show()
             return
         }
 
-        val host = UrlUtils.host(url)
-        val label = title.ifBlank { host }
-        val icon = IconFactory.create(host, SiteStore.favicon(context, host))
+        val icon = IconFactory.create(site.host, SiteStore.favicon(context, site.host), 192, site.badge)
 
-        val info = ShortcutInfoCompat.Builder(context, "site_$host")
-            .setShortLabel(label)
-            .setLongLabel(label)
+        val info = ShortcutInfoCompat.Builder(context, "site_${site.id}")
+            .setShortLabel(site.name)
+            .setLongLabel(site.name)
             .setIcon(IconCompat.createWithBitmap(icon))
-            .setIntent(BrowserActivity.createIntent(context, url))
+            .setIntent(BrowserActivity.createIntent(context, site))
             .build()
 
         val requested = ShortcutManagerCompat.requestPinShortcut(context, info, null)

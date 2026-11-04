@@ -73,4 +73,6 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+    // Profil WebView terpisah per akun (cookie, login, penyimpanan web sendiri-sendiri).
+    implementation("androidx.webkit:webkit:1.12.1")
 }

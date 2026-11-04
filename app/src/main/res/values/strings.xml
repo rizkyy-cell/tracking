@@ -1,16 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Web Cloner</string>
-    <string name="subtitle">Masukkan alamat situs web. Situs dibuka seperti aplikasi sendiri, dan sesi login Anda tersimpan.</string>
+    <string name="subtitle">Masukkan alamat situs. Setiap akun punya login sendiri, jadi satu situs bisa dibuka berkali-kali dengan akun berbeda.</string>
     <string name="hint_url">Alamat situs (contoh: tiktok.com)</string>
     <string name="open">Buka</string>
-    <string name="saved_sites">Situs tersimpan</string>
-    <string name="empty_sites">Belum ada situs. Masukkan alamat di atas untuk memulai.</string>
+    <string name="saved_sites">Akun tersimpan</string>
+    <string name="empty_sites">Belum ada akun. Masukkan alamat di atas untuk memulai.</string>
     <string name="invalid_url">Alamat tidak valid</string>
     <string name="more_options">Opsi lainnya</string>
 
+    <string name="new_account_title">Buat akun baru?</string>
+    <string name="new_account_message">Sudah ada %2$d akun untuk %1$s. Buat akun baru dengan login terpisah? Untuk membuka akun yang sudah ada, ketuk di daftar bawah.</string>
+    <string name="new_account_create">Buat akun baru</string>
+    <string name="multi_profile_unsupported">WebView di HP ini belum mendukung banyak akun terpisah. Perbarui \"Android System WebView\" di Play Store.</string>
+
+    <string name="rename">Ganti nama</string>
+    <string name="save">Simpan</string>
     <string name="add_shortcut">Tambah ke layar utama</string>
     <string name="delete">Hapus</string>
+    <string name="delete_confirm">Hapus akun \"%1$s\"? Login dan data akun ini ikut terhapus.</string>
     <string name="shortcut_unsupported">Launcher tidak mendukung pintasan</string>
     <string name="shortcut_requested">Pintasan diminta. Konfirmasi di layar utama.</string>
 
@@ -18,9 +26,9 @@
     <string name="desktop_mode">Mode desktop</string>
     <string name="pull_refresh">Tarik untuk muat ulang</string>
     <string name="open_external">Buka di browser</string>
-    <string name="clear_data">Hapus data login (semua situs)</string>
+    <string name="clear_data">Hapus data login akun ini</string>
     <string name="clear_data_short">Hapus</string>
-    <string name="clear_confirm">Semua login dan data situs di aplikasi ini akan dihapus. Lanjutkan?</string>
+    <string name="clear_confirm">Login dan data akun ini akan dihapus. Lanjutkan?</string>
     <string name="clear_done">Data dihapus</string>
     <string name="cancel">Batal</string>
 

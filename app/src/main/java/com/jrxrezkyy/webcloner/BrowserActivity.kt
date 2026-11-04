@@ -25,7 +25,6 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
-import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -43,9 +42,14 @@ class BrowserActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityBrowserBinding
     private lateinit var webView: WebView
+    private lateinit var site: Site
     private lateinit var startUrl: String
     private lateinit var host: String
     private lateinit var defaultUserAgent: String
+    private lateinit var cookieManager: CookieManager
+
+    /** true jika WebView ini terikat ke profil milik akun (login terpisah). */
+    private var usingProfile = false
 
     private var customView: View? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
@@ -71,22 +75,21 @@ class BrowserActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val raw = intent.dataString ?: intent.getStringExtra(EXTRA_URL)
-        val normalized = raw?.let { UrlUtils.normalize(it) }
-        if (normalized == null) {
+        val id = intent.getStringExtra(EXTRA_SITE_ID) ?: intent.data?.lastPathSegment
+        val found = if (id != null) SiteStore.get(this, id) else null
+        if (found == null) {
+            // Akun sudah dihapus (mis. kartu lama di Recents).
             finish()
             return
         }
-        startUrl = normalized
-        host = UrlUtils.host(startUrl)
+        site = found
+        startUrl = site.url
+        host = site.host
 
         binding = ActivityBrowserBinding.inflate(layoutInflater)
         setContentView(binding.root)
         webView = binding.webView
 
-        if (!SiteStore.contains(this, startUrl)) {
-            SiteStore.add(this, Site(startUrl, host))
-        }
         updateTaskDescription(SiteStore.favicon(this, host))
 
         setupToolbar()
@@ -118,7 +121,7 @@ class BrowserActivity : AppCompatActivity() {
     override fun onPause() {
         if (::webView.isInitialized) {
             webView.onPause()
-            CookieManager.getInstance().flush()
+            if (::cookieManager.isInitialized) cookieManager.flush()
         }
         super.onPause()
     }
@@ -138,11 +141,12 @@ class BrowserActivity : AppCompatActivity() {
 
     private fun setupToolbar() {
         val toolbar = binding.toolbar
-        toolbar.title = host
+        toolbar.title = site.name
+        toolbar.subtitle = if (site.name != host) host else null
         toolbar.setNavigationIcon(R.drawable.ic_close)
         toolbar.setNavigationOnClickListener { finishAndRemoveTask() }
         toolbar.inflateMenu(R.menu.browser_menu)
-        toolbar.menu.findItem(R.id.action_desktop).isChecked = SiteStore.isDesktop(this, host)
+        toolbar.menu.findItem(R.id.action_desktop).isChecked = SiteStore.isDesktop(this, site.id)
         toolbar.menu.findItem(R.id.action_pull_refresh).isChecked = SiteStore.pullRefresh(this)
         toolbar.setOnMenuItemClickListener { onMenuItem(it) }
     }
@@ -152,7 +156,7 @@ class BrowserActivity : AppCompatActivity() {
             R.id.action_refresh -> webView.reload()
             R.id.action_desktop -> {
                 item.isChecked = !item.isChecked
-                SiteStore.setDesktop(this, host, item.isChecked)
+                SiteStore.setDesktop(this, site.id, item.isChecked)
                 applyUserAgent()
                 webView.reload()
             }
@@ -161,7 +165,7 @@ class BrowserActivity : AppCompatActivity() {
                 SiteStore.setPullRefresh(this, item.isChecked)
                 binding.swipe.isEnabled = item.isChecked
             }
-            R.id.action_shortcut -> ShortcutHelper.pin(this, startUrl, host)
+            R.id.action_shortcut -> ShortcutHelper.pin(this, site)
             R.id.action_external -> openExternal(Uri.parse(webView.url ?: startUrl))
             R.id.action_clear -> confirmClearData()
             else -> return false
@@ -183,13 +187,24 @@ class BrowserActivity : AppCompatActivity() {
 
     @Suppress("DEPRECATION")
     private fun updateTaskDescription(favicon: Bitmap?) {
-        setTaskDescription(ActivityManager.TaskDescription(host, IconFactory.create(host, favicon, 128)))
+        setTaskDescription(
+            ActivityManager.TaskDescription(
+                site.name,
+                IconFactory.create(host, favicon, 128, site.badge)
+            )
+        )
     }
 
     // ------------------------------------------------------------------ WebView
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
+        // Wajib paling awal, sebelum WebView menyentuh jaringan: ikat ke profil akun ini.
+        usingProfile = Profiles.apply(webView, site)
+        if (!usingProfile && SiteStore.countForHost(this, host) > 1) {
+            Toast.makeText(this, R.string.multi_profile_unsupported, Toast.LENGTH_LONG).show()
+        }
+
         defaultUserAgent = WebSettings.getDefaultUserAgent(this)
 
         val s = webView.settings
@@ -209,10 +224,10 @@ class BrowserActivity : AppCompatActivity() {
         s.useWideViewPort = true
         applyUserAgent()
 
-        // Cookie persisten (sesi login bertahan) + cookie pihak ketiga untuk alur SSO/OAuth.
-        val cookies = CookieManager.getInstance()
-        cookies.setAcceptCookie(true)
-        cookies.setAcceptThirdPartyCookies(webView, true)
+        // Cookie milik profil akun ini (persisten) + cookie pihak ketiga untuk alur SSO/OAuth.
+        cookieManager = Profiles.cookieManager(site, usingProfile)
+        cookieManager.setAcceptCookie(true)
+        cookieManager.setAcceptThirdPartyCookies(webView, true)
 
         binding.swipe.isEnabled = SiteStore.pullRefresh(this)
         binding.swipe.setOnRefreshListener { webView.reload() }
@@ -232,7 +247,7 @@ class BrowserActivity : AppCompatActivity() {
      */
     private fun applyUserAgent() {
         val s = webView.settings
-        if (SiteStore.isDesktop(this, host)) {
+        if (SiteStore.isDesktop(this, site.id)) {
             val chrome = Regex("Chrome/([\\d.]+)").find(defaultUserAgent)?.groupValues?.get(1)
                 ?: "120.0.0.0"
             s.userAgentString =
@@ -261,7 +276,7 @@ class BrowserActivity : AppCompatActivity() {
         override fun onPageFinished(view: WebView, url: String?) {
             binding.progress.visibility = View.GONE
             binding.swipe.isRefreshing = false
-            CookieManager.getInstance().flush()
+            cookieManager.flush()
         }
 
         override fun onReceivedError(
@@ -325,7 +340,7 @@ class BrowserActivity : AppCompatActivity() {
             )
             binding.fullscreenContainer.visibility = View.VISIBLE
             binding.mainGroup.visibility = View.GONE
-            setImmersive(true)
+            setImmersiveMode(true)
         }
 
         override fun onHideCustomView() {
@@ -413,11 +428,12 @@ class BrowserActivity : AppCompatActivity() {
         binding.fullscreenContainer.removeView(view)
         binding.fullscreenContainer.visibility = View.GONE
         binding.mainGroup.visibility = View.VISIBLE
-        setImmersive(false)
+        setImmersiveMode(false)
         callback?.onCustomViewHidden()
     }
 
-    private fun setImmersive(enabled: Boolean) {
+    // Nama sengaja bukan "setImmersive": itu sudah dipakai Activity.setImmersive milik Android.
+    private fun setImmersiveMode(enabled: Boolean) {
         val controller = WindowInsetsControllerCompat(window, window.decorView)
         if (enabled) {
             controller.systemBarsBehavior =
@@ -518,7 +534,7 @@ class BrowserActivity : AppCompatActivity() {
             val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
             val request = DownloadManager.Request(Uri.parse(url)).apply {
                 if (!mimeType.isNullOrBlank()) setMimeType(mimeType)
-                addRequestHeader("Cookie", CookieManager.getInstance().getCookie(url) ?: "")
+                addRequestHeader("Cookie", cookieManager.getCookie(url) ?: "")
                 addRequestHeader("User-Agent", userAgent ?: webView.settings.userAgentString)
                 setTitle(fileName)
                 setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
@@ -538,9 +554,9 @@ class BrowserActivity : AppCompatActivity() {
         MaterialAlertDialogBuilder(this)
             .setMessage(R.string.clear_confirm)
             .setPositiveButton(R.string.clear_data_short) { _, _ ->
-                CookieManager.getInstance().removeAllCookies(null)
-                CookieManager.getInstance().flush()
-                WebStorage.getInstance().deleteAllData()
+                cookieManager.removeAllCookies(null)
+                cookieManager.flush()
+                Profiles.webStorage(site, usingProfile).deleteAllData()
                 webView.clearCache(true)
                 webView.clearHistory()
                 toast(R.string.clear_done)
@@ -555,17 +571,17 @@ class BrowserActivity : AppCompatActivity() {
     }
 
     companion object {
-        const val EXTRA_URL = "extra_url"
+        const val EXTRA_SITE_ID = "extra_site_id"
 
         /**
-         * Intent untuk membuka situs. `data` diisi URL agar setiap situs punya "dokumen"
-         * sendiri (kartu terpisah di Recents), dan action wajib ada untuk pintasan.
+         * Intent untuk membuka satu akun. `data` unik per akun (webcloner://site/<id>) sehingga
+         * setiap akun mendapat kartu sendiri di Recents, bahkan untuk domain yang sama.
          */
-        fun createIntent(context: Context, url: String): Intent =
+        fun createIntent(context: Context, site: Site): Intent =
             Intent(context, BrowserActivity::class.java).apply {
                 action = Intent.ACTION_VIEW
-                data = Uri.parse(url)
-                putExtra(EXTRA_URL, url)
+                data = Uri.parse("webcloner://site/${site.id}")
+                putExtra(EXTRA_SITE_ID, site.id)
             }
     }
 }
