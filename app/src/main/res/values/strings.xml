@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Web Cloner</string>
+    <string name="subtitle">Masukkan alamat situs web. Situs dibuka seperti aplikasi sendiri, dan sesi login Anda tersimpan.</string>
+    <string name="hint_url">Alamat situs (contoh: tiktok.com)</string>
+    <string name="open">Buka</string>
+    <string name="saved_sites">Situs tersimpan</string>
+    <string name="empty_sites">Belum ada situs. Masukkan alamat di atas untuk memulai.</string>
+    <string name="invalid_url">Alamat tidak valid</string>
+    <string name="more_options">Opsi lainnya</string>
+
+    <string name="add_shortcut">Tambah ke layar utama</string>
+    <string name="delete">Hapus</string>
+    <string name="shortcut_unsupported">Launcher tidak mendukung pintasan</string>
+    <string name="shortcut_requested">Pintasan diminta. Konfirmasi di layar utama.</string>
+
+    <string name="refresh">Muat ulang</string>
+    <string name="desktop_mode">Mode desktop</string>
+    <string name="pull_refresh">Tarik untuk muat ulang</string>
+    <string name="open_external">Buka di browser</string>
+    <string name="clear_data">Hapus data login (semua situs)</string>
+    <string name="clear_data_short">Hapus</string>
+    <string name="clear_confirm">Semua login dan data situs di aplikasi ini akan dihapus. Lanjutkan?</string>
+    <string name="clear_done">Data dihapus</string>
+    <string name="cancel">Batal</string>
+
+    <string name="load_error">Gagal memuat halaman\n%1$s</string>
+    <string name="retry">Coba lagi</string>
+    <string name="no_app">Tidak ada aplikasi untuk membuka tautan ini</string>
+
+    <string name="download_started">Mengunduh: %1$s</string>
+    <string name="download_failed">Unduhan gagal</string>
+    <string name="download_unsupported">Jenis unduhan ini belum didukung</string>
+    <string name="storage_denied">Izin penyimpanan ditolak</string>
+
+    <string name="allow">Izinkan</string>
+    <string name="deny">Tolak</string>
+    <string name="ask_location">Izinkan %1$s mengakses lokasi Anda?</string>
+    <string name="ask_camera_mic">Izinkan %1$s menggunakan kamera atau mikrofon?</string>
+</resources>

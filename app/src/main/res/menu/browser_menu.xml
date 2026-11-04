@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/action_refresh"
+        android:title="@string/refresh" />
+    <item
+        android:id="@+id/action_desktop"
+        android:checkable="true"
+        android:title="@string/desktop_mode" />
+    <item
+        android:id="@+id/action_pull_refresh"
+        android:checkable="true"
+        android:title="@string/pull_refresh" />
+    <item
+        android:id="@+id/action_shortcut"
+        android:title="@string/add_shortcut" />
+    <item
+        android:id="@+id/action_external"
+        android:title="@string/open_external" />
+    <item
+        android:id="@+id/action_clear"
+        android:title="@string/clear_data" />
+</menu>
