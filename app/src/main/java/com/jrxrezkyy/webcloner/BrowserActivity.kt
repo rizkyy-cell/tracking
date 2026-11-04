@@ -325,7 +325,7 @@ class BrowserActivity : AppCompatActivity() {
             )
             binding.fullscreenContainer.visibility = View.VISIBLE
             binding.mainGroup.visibility = View.GONE
-            setImmersive(true)
+            setImmersiveMode(true)
         }
 
         override fun onHideCustomView() {
@@ -413,11 +413,11 @@ class BrowserActivity : AppCompatActivity() {
         binding.fullscreenContainer.removeView(view)
         binding.fullscreenContainer.visibility = View.GONE
         binding.mainGroup.visibility = View.VISIBLE
-        setImmersive(false)
+        setImmersiveMode(false)
         callback?.onCustomViewHidden()
     }
 
-    private fun setImmersive(enabled: Boolean) {
+    private fun setImmersiveMode(enabled: Boolean) {
         val controller = WindowInsetsControllerCompat(window, window.decorView)
         if (enabled) {
             controller.systemBarsBehavior =
