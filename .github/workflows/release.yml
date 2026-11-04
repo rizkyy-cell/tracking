@@ -2,7 +2,7 @@ name: Build & Release
 
 # Satu file untuk dua keperluan:
 #  1) Push tag "v*" (mis. v1.0.0) atau jalankan manual -> build APK + buat GitHub Release.
-#  2) Push biasa ke branch -> jika ada WebCloner.zip di root repo, otomatis diekstrak
+#  2) Push biasa ke branch -> jika ada file WebCloner*.zip di root repo, otomatis diekstrak
 #     (berguna jika Anda hanya punya HP dan mengunggah proyek sebagai satu file ZIP).
 
 on:
@@ -27,18 +27,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Ekstrak WebCloner.zip jika ada
+      - name: Ekstrak ZIP proyek jika ada
         run: |
-          if [ ! -f WebCloner.zip ]; then
-            echo "Tidak ada WebCloner.zip, dilewati."
+          shopt -s nullglob
+          zips=(WebCloner*.zip webcloner*.zip)
+          if [ ${#zips[@]} -eq 0 ]; then
+            echo "Tidak ada ZIP WebCloner di root, dilewati."
             exit 0
           fi
-          unzip -q -o WebCloner.zip -x '.github/*' '__MACOSX/*'
-          rm -f WebCloner.zip
+          for z in "${zips[@]}"; do
+            echo "Mengekstrak: $z"
+            unzip -q -o "$z" -x '.github/*' '__MACOSX/*'
+            rm -f -- "$z"
+          done
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Ekstrak WebCloner.zip" || exit 0
+          git commit -m "Ekstrak ZIP proyek" || exit 0
           git push
 
   # ---------------------------------------------------------------- build + rilis
