@@ -38,5 +38,6 @@ Simpan `release.jks` di tempat aman; jangan commit ke repo.
 - Login Google/Gmail sering diblokir di WebView (kebijakan Google); tidak ada solusi andal.
 - Banyak akun terpisah butuh "Android System WebView" versi baru (dari Play Store). Jika tidak
   didukung, semua akun berbagi satu penyimpanan login dan aplikasi menampilkan peringatan.
-- Unduhan `blob:`/`data:` belum didukung.
+- Unduhan `blob:`/`data:` (file yang dibuat di dalam halaman) disimpan ke folder Download lewat
+  jembatan JavaScript; file yang sangat besar bisa lambat karena dikirim per potongan.
 - Pastikan Anda mematuhi syarat layanan situs yang dibuka.

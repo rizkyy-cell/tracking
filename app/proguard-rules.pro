@@ -1,3 +1,6 @@
-# Aplikasi ini tidak memakai JavascriptInterface maupun refleksi khusus.
-# Aturan bawaan proguard-android-optimize.txt sudah cukup.
--keepattributes SourceFile,LineNumberTable
+# Jembatan unduhan (BrowserActivity.DownloadBridge) dipanggil dari JavaScript lewat refleksi,
+# jadi metode bertanda @JavascriptInterface dan atributnya tidak boleh dihapus/diubah namanya R8.
+-keepattributes *Annotation*,SourceFile,LineNumberTable
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}

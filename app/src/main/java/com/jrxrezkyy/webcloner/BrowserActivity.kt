@@ -1,6 +1,17 @@
 package com.jrxrezkyy.webcloner
 
 import android.Manifest
+import android.content.ContentValues
+import android.media.MediaScannerConnection
+import android.provider.MediaStore
+import android.util.Base64
+import android.webkit.JavascriptInterface
+import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import java.io.OutputStream
+import java.util.UUID
 import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.app.DownloadManager
@@ -50,6 +61,39 @@ class BrowserActivity : AppCompatActivity() {
 
     /** true jika WebView ini terikat ke profil milik akun (login terpisah). */
     private var usingProfile = false
+
+    // Status unduhan blob:/data: yang sedang berjalan (satu per satu). Semua akses lewat blobLock.
+    private val blobLock = Any()
+    private var blobToken: String? = null
+    private var blobStream: OutputStream? = null
+    private var blobUri: Uri? = null
+    private var blobFile: File? = null
+    private var blobName: String = ""
+    private var blobMimeHint: String = ""
+
+    /**
+     * Dipasang di setiap halaman: (1) mencatat nama file dari atribut `download` pada tautan,
+     * karena alamat blob: tidak membawa nama; (2) menunda revokeObjectURL 60 detik supaya
+     * blob belum hilang saat aplikasi sempat membacanya.
+     */
+    private val hookJs = """
+        (function() {
+          if (window.__wcHook) return;
+          window.__wcHook = true;
+          var rec = function(a) { try { if (a && a.download) window.__wcName = a.download; } catch (e) {} };
+          var origClick = HTMLAnchorElement.prototype.click;
+          HTMLAnchorElement.prototype.click = function() { rec(this); return origClick.apply(this, arguments); };
+          document.addEventListener('click', function(e) {
+            var t = e.target;
+            while (t && t.tagName !== 'A') t = t.parentElement;
+            rec(t);
+          }, true);
+          var origRevoke = URL.revokeObjectURL;
+          URL.revokeObjectURL = function(u) {
+            setTimeout(function() { try { origRevoke.call(URL, u); } catch (e) {} }, 60000);
+          };
+        })();
+    """.trimIndent()
 
     private var customView: View? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
@@ -239,6 +283,7 @@ class BrowserActivity : AppCompatActivity() {
         })
         webView.webViewClient = createWebViewClient()
         webView.webChromeClient = createChromeClient()
+        webView.addJavascriptInterface(DownloadBridge(), BRIDGE_NAME)
     }
 
     /**
@@ -271,12 +316,14 @@ class BrowserActivity : AppCompatActivity() {
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             binding.errorGroup.visibility = View.GONE
             binding.progress.visibility = View.VISIBLE
+            view.evaluateJavascript(hookJs, null)
         }
 
         override fun onPageFinished(view: WebView, url: String?) {
             binding.progress.visibility = View.GONE
             binding.swipe.isRefreshing = false
             cookieManager.flush()
+            view.evaluateJavascript(hookJs, null)
         }
 
         override fun onReceivedError(
@@ -507,6 +554,10 @@ class BrowserActivity : AppCompatActivity() {
         contentDisposition: String?,
         mimeType: String?
     ) {
+        if (url.startsWith("blob:") || url.startsWith("data:")) {
+            handleBlobDownload(url, mimeType)
+            return
+        }
         if (!url.startsWith("http://") && !url.startsWith("https://")) {
             toast(R.string.download_unsupported)
             return
@@ -548,6 +599,218 @@ class BrowserActivity : AppCompatActivity() {
         }
     }
 
+    // ------------------------------------------------------------------ unduhan blob: / data:
+
+    /*
+     * Alamat blob: hanya ada di dalam halaman (dibuat oleh JavaScript), jadi DownloadManager
+     * tidak bisa mengambilnya. Caranya: jalankan skrip di halaman yang membaca blob itu per
+     * potongan 512 KB, lalu kirim ke aplikasi lewat jembatan JavaScript untuk ditulis ke folder
+     * Download. Setiap unduhan memakai token acak sekali pakai; panggilan tanpa token yang cocok
+     * (misalnya dari iklan atau iframe) diabaikan, sehingga halaman lain tidak bisa menulis file.
+     */
+
+    private fun handleBlobDownload(url: String, mimeType: String?) {
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            ensurePermissions(listOf(Manifest.permission.WRITE_EXTERNAL_STORAGE)) { granted ->
+                if (granted.values.all { it }) {
+                    runBlobScript(url, mimeType)
+                } else {
+                    toast(R.string.storage_denied)
+                }
+            }
+        } else {
+            runBlobScript(url, mimeType)
+        }
+    }
+
+    private fun runBlobScript(url: String, mimeType: String?) {
+        abortBlob()
+        val token = UUID.randomUUID().toString()
+        synchronized(blobLock) {
+            blobToken = token
+            blobMimeHint = mimeType ?: ""
+        }
+        val js = """
+            (function() {
+              var B = window.$BRIDGE_NAME, T = ${JSONObject.quote(token)}, U = ${JSONObject.quote(url)};
+              var name = window.__wcName || '';
+              window.__wcName = '';
+              if (!B) return;
+              var x = new XMLHttpRequest();
+              x.open('GET', U, true);
+              x.responseType = 'blob';
+              x.onerror = function() { B.fail(T); };
+              x.onload = function() {
+                var blob = x.response;
+                if (!blob) { B.fail(T); return; }
+                B.begin(T, name, blob.type || '');
+                var size = blob.size, step = 524288, pos = 0;
+                (function next() {
+                  if (pos >= size) { B.finish(T); return; }
+                  var end = Math.min(pos + step, size);
+                  var r = new FileReader();
+                  r.onload = function() {
+                    var s = r.result;
+                    B.chunk(T, s.substring(s.indexOf(',') + 1));
+                    pos = end;
+                    setTimeout(next, 0);
+                  };
+                  r.onerror = function() { B.fail(T); };
+                  r.readAsDataURL(blob.slice(pos, end));
+                })();
+              };
+              x.send();
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(js, null)
+    }
+
+    /** Menutup dan menghapus unduhan setengah jadi. */
+    private fun abortBlob() {
+        synchronized(blobLock) {
+            try {
+                blobStream?.close()
+            } catch (e: Exception) {
+                // abaikan
+            }
+            blobStream = null
+            val uri = blobUri
+            if (uri != null) {
+                try {
+                    contentResolver.delete(uri, null, null)
+                } catch (e: Exception) {
+                    // abaikan
+                }
+            }
+            blobFile?.delete()
+            blobUri = null
+            blobFile = null
+            blobToken = null
+        }
+    }
+
+    private fun failBlob() {
+        abortBlob()
+        runOnUiThread { toast(R.string.blob_failed) }
+    }
+
+    private fun sanitizeFileName(raw: String): String =
+        raw.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]"), "_").trim().trim('.').take(120)
+
+    private fun uniqueFile(dir: File, name: String): File {
+        var file = File(dir, name)
+        if (!file.exists()) return file
+        val dot = name.lastIndexOf('.')
+        val base = if (dot > 0) name.substring(0, dot) else name
+        val ext = if (dot > 0) name.substring(dot) else ""
+        var i = 1
+        while (file.exists()) {
+            file = File(dir, "$base ($i)$ext")
+            i++
+        }
+        return file
+    }
+
+    /** Dipanggil dari JavaScript (thread terpisah). Semua metode memeriksa token. */
+    private inner class DownloadBridge {
+
+        @JavascriptInterface
+        fun begin(token: String, name: String, mime: String) {
+            synchronized(blobLock) {
+                if (token != blobToken) return
+                try {
+                    val type = mime.ifBlank { blobMimeHint.ifBlank { "application/octet-stream" } }
+                    var fileName = sanitizeFileName(name)
+                    if (fileName.isBlank()) {
+                        fileName = URLUtil.guessFileName("http://localhost/download", null, type)
+                    }
+                    blobName = fileName
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        val values = ContentValues().apply {
+                            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                            put(MediaStore.MediaColumns.MIME_TYPE, type)
+                            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                            put(MediaStore.MediaColumns.IS_PENDING, 1)
+                        }
+                        val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                            ?: throw IOException("insert gagal")
+                        blobUri = uri
+                        blobStream = contentResolver.openOutputStream(uri)
+                            ?: throw IOException("stream gagal")
+                    } else {
+                        val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                        dir.mkdirs()
+                        val file = uniqueFile(dir, fileName)
+                        blobFile = file
+                        blobName = file.name
+                        blobStream = FileOutputStream(file)
+                    }
+                } catch (e: Exception) {
+                    failBlob()
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun chunk(token: String, base64: String) {
+            synchronized(blobLock) {
+                if (token != blobToken) return
+                val out = blobStream ?: return
+                try {
+                    out.write(Base64.decode(base64, Base64.DEFAULT))
+                } catch (e: Exception) {
+                    failBlob()
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun finish(token: String) {
+            synchronized(blobLock) {
+                if (token != blobToken) return
+                try {
+                    blobStream?.flush()
+                    blobStream?.close()
+                    blobStream = null
+                    val uri = blobUri
+                    if (uri != null) {
+                        val done = ContentValues()
+                        done.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                        contentResolver.update(uri, done, null, null)
+                    }
+                    val file = blobFile
+                    if (file != null) {
+                        MediaScannerConnection.scanFile(
+                            this@BrowserActivity, arrayOf(file.absolutePath), null, null
+                        )
+                    }
+                    val savedName = blobName
+                    blobUri = null
+                    blobFile = null
+                    blobToken = null
+                    runOnUiThread {
+                        Toast.makeText(
+                            this@BrowserActivity,
+                            getString(R.string.blob_saved, savedName),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                } catch (e: Exception) {
+                    failBlob()
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun fail(token: String) {
+            synchronized(blobLock) {
+                if (token != blobToken) return
+                failBlob()
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ misc
 
     private fun confirmClearData() {
@@ -572,6 +835,7 @@ class BrowserActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_SITE_ID = "extra_site_id"
+        private const val BRIDGE_NAME = "WCDownload"
 
         /**
          * Intent untuk membuka satu akun. `data` unik per akun (webcloner://site/<id>) sehingga

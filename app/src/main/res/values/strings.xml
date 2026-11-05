@@ -40,6 +40,8 @@
     <string name="download_failed">Unduhan gagal</string>
     <string name="download_unsupported">Jenis unduhan ini belum didukung</string>
     <string name="storage_denied">Izin penyimpanan ditolak</string>
+    <string name="blob_saved">Tersimpan di folder Download: %1$s</string>
+    <string name="blob_failed">Gagal menyimpan file</string>
 
     <string name="allow">Izinkan</string>
     <string name="deny">Tolak</string>
