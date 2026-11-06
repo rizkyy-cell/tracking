@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Web Cloner</string>
+    <string name="subtitle">Masukkan alamat situs. Setiap akun punya login sendiri, jadi satu situs bisa dibuka berkali-kali dengan akun berbeda.</string>
+    <string name="hint_url">Alamat situs (contoh: tiktok.com)</string>
+    <string name="open">Buka</string>
+    <string name="saved_sites">Akun tersimpan</string>
+    <string name="empty_sites">Belum ada akun. Masukkan alamat di atas untuk memulai.</string>
+    <string name="invalid_url">Alamat tidak valid</string>
+    <string name="more_options">Opsi lainnya</string>
+
+    <string name="new_account_title">Buat akun baru?</string>
+    <string name="new_account_message">Sudah ada %2$d akun untuk %1$s. Buat akun baru dengan login terpisah? Untuk membuka akun yang sudah ada, ketuk di daftar bawah.</string>
+    <string name="new_account_create">Buat akun baru</string>
+    <string name="multi_profile_unsupported">WebView di HP ini belum mendukung banyak akun terpisah. Perbarui \"Android System WebView\" di Play Store.</string>
+
+    <string name="rename">Ganti nama</string>
+    <string name="save">Simpan</string>
+    <string name="add_shortcut">Tambah ke layar utama</string>
+    <string name="delete">Hapus</string>
+    <string name="delete_confirm">Hapus akun \"%1$s\"? Login dan data akun ini ikut terhapus.</string>
+    <string name="shortcut_unsupported">Launcher tidak mendukung pintasan</string>
+    <string name="shortcut_requested">Pintasan diminta. Konfirmasi di layar utama.</string>
+
+    <string name="refresh">Muat ulang</string>
+    <string name="desktop_mode">Mode desktop</string>
+    <string name="pull_refresh">Tarik untuk muat ulang</string>
+    <string name="open_external">Buka di browser</string>
+    <string name="clear_data">Hapus data login akun ini</string>
+    <string name="clear_data_short">Hapus</string>
+    <string name="clear_confirm">Login dan data akun ini akan dihapus. Lanjutkan?</string>
+    <string name="clear_done">Data dihapus</string>
+    <string name="cancel">Batal</string>
+
+    <string name="load_error">Gagal memuat halaman\n%1$s</string>
+    <string name="retry">Coba lagi</string>
+    <string name="no_app">Tidak ada aplikasi untuk membuka tautan ini</string>
+
+    <string name="download_started">Mengunduh: %1$s</string>
+    <string name="download_failed">Unduhan gagal</string>
+    <string name="download_unsupported">Jenis unduhan ini belum didukung</string>
+    <string name="storage_denied">Izin penyimpanan ditolak</string>
+    <string name="blob_saved">Tersimpan di folder Download: %1$s</string>
+    <string name="blob_failed">Gagal menyimpan file</string>
+
+    <string name="allow">Izinkan</string>
+    <string name="deny">Tolak</string>
+    <string name="ask_location">Izinkan %1$s mengakses lokasi Anda?</string>
+    <string name="ask_camera_mic">Izinkan %1$s menggunakan kamera atau mikrofon?</string>
+
+    <string name="close">Tutup</string>
+    <string name="back">Kembali</string>
+    <string name="settings">Pengaturan</string>
+    <string name="account_missing">Akun ini sudah dihapus</string>
+    <string name="account_count">%1$d akun</string>
+    <string name="open_account">Buka</string>
+    <string name="change_icon">Ubah ikon</string>
+    <string name="reset_icon">Kembalikan ikon asli</string>
+    <string name="icon_updated">Ikon diperbarui</string>
+    <string name="icon_failed">Gambar tidak bisa dipakai sebagai ikon</string>
+
+    <string name="manage_accounts">Kelola akun</string>
+    <string name="no_accounts_settings">Belum ada akun. Tambahkan dari layar utama, lalu atur namanya, ikonnya, dan datanya di sini.</string>
+    <string name="appearance">Tampilan</string>
+    <string name="theme">Tema</string>
+    <string name="theme_system">Ikuti sistem</string>
+    <string name="theme_light">Terang</string>
+    <string name="theme_dark">Gelap</string>
+    <string name="pull_refresh_hint">Tarik halaman ke bawah untuk memuat ulang</string>
+    <string name="data_section">Data</string>
+    <string name="clear_all">Hapus semua login</string>
+    <string name="clear_all_hint">Keluar dari semua akun di semua situs</string>
+    <string name="clear_all_confirm">Login dan data semua akun akan dihapus. Daftar akun tetap ada. Lanjutkan?</string>
+    <string name="about">Tentang</string>
+    <string name="version">Versi</string>
+    <string name="author">Pembuat</string>
+    <string name="license">Lisensi</string>
+    <string name="license_short">Lisensi MIT</string>
+    <string name="copyright">Hak cipta © 2026 %1$s</string>
+</resources>

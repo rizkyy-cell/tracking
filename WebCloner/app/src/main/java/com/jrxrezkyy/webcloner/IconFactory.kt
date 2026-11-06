@@ -1,0 +1,101 @@
+package com.jrxrezkyy.webcloner
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapShader
+import android.graphics.Matrix
+import android.graphics.Shader
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
+
+/** Membuat ikon bulat untuk daftar akun dan pintasan layar utama. */
+object IconFactory {
+
+    private val palette = intArrayOf(
+        0xFF2563EB.toInt(),
+        0xFF7C3AED.toInt(),
+        0xFFDB2777.toInt(),
+        0xFFEA580C.toInt(),
+        0xFF059669.toInt(),
+        0xFF0891B2.toInt()
+    )
+
+    /**
+     * Jika [favicon] ada: favicon di atas lingkaran putih.
+     * Jika tidak: lingkaran berwarna dengan huruf pertama host.
+     * Jika [badge] ada (nomor akun): lencana kecil di pojok kanan bawah supaya
+     * akun-akun dengan situs yang sama mudah dibedakan.
+     */
+    /** Ikon akun: gambar pilihan pengguna bila ada, kalau tidak favicon atau huruf pertama. */
+    fun forSite(context: Context, site: Site, size: Int = 192, favicon: Bitmap? = null): Bitmap =
+        create(
+            site.host,
+            favicon ?: SiteStore.favicon(context, site.host),
+            size,
+            site.badge,
+            SiteStore.customIcon(context, site.id)
+        )
+
+    fun create(
+        host: String,
+        favicon: Bitmap?,
+        size: Int = 192,
+        badge: String? = null,
+        custom: Bitmap? = null
+    ): Bitmap {
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val r = size / 2f
+
+        if (custom != null) {
+            val shader = BitmapShader(custom, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+            val m = Matrix()
+            m.setScale(size.toFloat() / custom.width, size.toFloat() / custom.height)
+            shader.setLocalMatrix(m)
+            paint.shader = shader
+            canvas.drawCircle(r, r, r, paint)
+            paint.shader = null
+        } else if (favicon != null) {
+            paint.color = Color.WHITE
+            canvas.drawCircle(r, r, r, paint)
+            val target = size * 0.55f
+            val dst = RectF(r - target / 2, r - target / 2, r + target / 2, r + target / 2)
+            paint.isFilterBitmap = true
+            canvas.drawBitmap(favicon, null, dst, paint)
+        } else {
+            val seed = host + (badge ?: "")
+            paint.color = palette[(seed.hashCode() and 0x7fffffff) % palette.size]
+            canvas.drawCircle(r, r, r, paint)
+            paint.color = Color.WHITE
+            paint.textSize = size * 0.5f
+            paint.textAlign = Paint.Align.CENTER
+            paint.typeface = Typeface.DEFAULT_BOLD
+            val letter = host.firstOrNull { it.isLetterOrDigit() }
+                ?.uppercaseChar()?.toString() ?: "W"
+            val y = r - (paint.descent() + paint.ascent()) / 2
+            canvas.drawText(letter, r, y, paint)
+        }
+
+        if (badge != null) {
+            val br = size * 0.24f
+            val gap = size * 0.02f
+            val cx = size - br - gap
+            val cy = size - br - gap
+            paint.color = Color.WHITE
+            canvas.drawCircle(cx, cy, br + gap, paint)
+            paint.color = 0xFF111827.toInt()
+            canvas.drawCircle(cx, cy, br, paint)
+            paint.color = Color.WHITE
+            paint.textSize = br * 1.2f
+            paint.textAlign = Paint.Align.CENTER
+            paint.typeface = Typeface.DEFAULT_BOLD
+            val by = cy - (paint.descent() + paint.ascent()) / 2
+            canvas.drawText(badge, cx, by, paint)
+        }
+        return bitmap
+    }
+}
