@@ -97,14 +97,6 @@ class BrowserUi(private val activity: BrowserActivity) {
         // ---- kartu halaman: sudut atas membulat, isi dipotong mengikuti bentuk
         val card = FrameLayout(activity)
         card.setBackgroundColor(Glass.surface(activity))
-        val r = dp(26)
-        card.outlineProvider = object : ViewOutlineProvider() {
-            override fun getOutline(view: View, outline: Outline) {
-                outline.setRoundRect(0, 0, view.width, view.height + r, r.toFloat())
-            }
-        }
-        card.clipToOutline = true
-
         swipe.setColorSchemeColors(Glass.accent(activity))
         swipe.setProgressBackgroundColorSchemeColor(if (Glass.night(activity)) 0xFF1B2552.toInt() else Color.WHITE)
         swipe.addView(webView, FrameLayout.LayoutParams(Glass.MATCH, Glass.MATCH))

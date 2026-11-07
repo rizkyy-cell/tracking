@@ -77,4 +77,8 @@
     <string name="license">Lisensi</string>
     <string name="license_short">Lisensi MIT</string>
     <string name="copyright">Hak cipta © 2026 %1$s</string>
+    <string name="crash_title">Aplikasi sempat berhenti</string>
+    <string name="crash_message">Salin laporan ini dan kirim ke pembuat agar bisa diperbaiki.</string>
+    <string name="crash_copy">Salin</string>
+    <string name="crash_copied">Laporan disalin</string>
 </resources>

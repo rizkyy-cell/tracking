@@ -38,6 +38,10 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false" />
+
         <!-- Perantara untuk pintasan layar utama. Affinity sendiri supaya launcher tidak
              menggabungkannya ke task akun yang sedang terbuka; ia langsung menutup diri. -->
         <activity

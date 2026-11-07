@@ -1,7 +1,11 @@
 package com.jrxrezkyy.webcloner
 
 import android.animation.ObjectAnimator
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
+import java.io.File
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
@@ -30,6 +34,30 @@ class MainActivity : GlassActivity() {
         setGlassContent(buildUi())
         // Pintasan buatan versi lama diarahkan ke perantara baru (perbaikan buka-dua-akun).
         ShortcutHelper.refreshAll(this)
+        showLastCrash()
+    }
+
+    /** Jika aplikasi berhenti di sesi sebelumnya, tampilkan penyebabnya supaya bisa dilaporkan. */
+    private fun showLastCrash() {
+        val file = File(filesDir, App.CRASH_FILE)
+        if (!file.exists()) return
+        val report = try {
+            file.readText()
+        } catch (e: Exception) {
+            return
+        }
+        file.delete()
+        GlassDialog(this)
+            .title(R.string.crash_title)
+            .message(R.string.crash_message)
+            .scrollText(report)
+            .button(R.string.crash_copy) {
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("crash", report))
+                Toast.makeText(this, R.string.crash_copied, Toast.LENGTH_SHORT).show()
+            }
+            .button(R.string.close, GlassDialog.Kind.ACCENT)
+            .show()
     }
 
     override fun onResume() {

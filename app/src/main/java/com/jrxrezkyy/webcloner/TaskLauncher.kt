@@ -34,8 +34,22 @@ object TaskLauncher {
         }
 
     fun open(context: Context, site: Site) {
-        if (!bringToFront(context, site)) {
+        if (bringToFront(context, site)) return
+        try {
             context.startActivity(intent(context, site))
+        } catch (e: Exception) {
+            // Cadangan: buka tanpa flag dokumen bila sistem menolak kombinasi flag.
+            try {
+                context.startActivity(
+                    intent(context, site).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                )
+            } catch (e2: Exception) {
+                android.widget.Toast.makeText(
+                    context, "Gagal membuka: ${e2.javaClass.simpleName}", android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 
