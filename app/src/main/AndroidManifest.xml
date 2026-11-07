@@ -18,6 +18,7 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <application
+        android:name=".App"
         android:allowBackup="false"
         android:hardwareAccelerated="true"
         android:icon="@mipmap/ic_launcher"
@@ -37,12 +38,22 @@
             </intent-filter>
         </activity>
 
-        <!-- documentLaunchMode: setiap situs tampil sebagai kartu terpisah di Recents,
-             terasa seperti aplikasi sendiri-sendiri. -->
+        <!-- Perantara untuk pintasan layar utama. Affinity sendiri supaya launcher tidak
+             menggabungkannya ke task akun yang sedang terbuka; ia langsung menutup diri. -->
+        <activity
+            android:name=".ShortcutActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:taskAffinity="com.jrxrezkyy.webcloner.shortcut"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- Tiap akun berjalan di task sendiri; TaskLauncher memberi flag NEW_DOCUMENT dan
+             MULTIPLE_TASK. uiMode sengaja tidak ditangani sendiri: ganti tema = buat ulang
+             layar (halaman dipulihkan dari state), supaya warna kaca ikut berganti. -->
         <activity
             android:name=".BrowserActivity"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|uiMode|density"
-            android:documentLaunchMode="intoExisting"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|density"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
     </application>

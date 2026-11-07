@@ -75,4 +75,25 @@ object Profiles {
             // Profil masih dipakai oleh layar yang terbuka; datanya sudah dikosongkan di atas.
         }
     }
+
+    /**
+     * Mengosongkan login dan data situs milik akun, tetapi profilnya tetap ada.
+     * Tanpa dukungan profil, yang dikosongkan adalah penyimpanan bersama (semua akun).
+     */
+    fun clearData(site: Site) {
+        if (supported()) {
+            try {
+                val profile = ProfileStore.getInstance().getOrCreateProfile(site.profile)
+                profile.cookieManager.removeAllCookies(null)
+                profile.cookieManager.flush()
+                profile.webStorage.deleteAllData()
+                return
+            } catch (e: Exception) {
+                // jatuh ke penyimpanan bersama
+            }
+        }
+        CookieManager.getInstance().removeAllCookies(null)
+        CookieManager.getInstance().flush()
+        WebStorage.getInstance().deleteAllData()
+    }
 }

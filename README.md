@@ -4,6 +4,10 @@ Aplikasi Android: masukkan alamat situs (mis. `tiktok.com`), situs terbuka di da
 seperti aplikasi sendiri, login Anda tersimpan, dan bisa ditambahkan ke layar utama sebagai ikon.
 
 ## Fitur
+- Tampilan "liquid glass": panel kaca bening berbingkai terang di atas latar pita biru, mode terang/gelap
+- Pengaturan: kelola akun (ganti nama, ikon khusus, pintasan, hapus data), tema, lisensi
+- Tiap akun terbuka di kartu sendiri, jadi pintasan A dan B bisa dibuka bersamaan (juga di jendela mengambang)
+- Mode desktop sungguhan (viewport 1280 px + identitas Linux desktop)
 - Input domain/URL -> otomatis `https://`; teks biasa dicari di Google
 - Sesi login persisten (cookie & penyimpanan web), termasuk cookie pihak ketiga untuk SSO
 - Banyak akun per situs: tiap akun punya login/cookie sendiri (profil WebView terpisah),
@@ -32,6 +36,9 @@ base64 -w0 release.jks
 Lalu isi di Settings -> Secrets and variables -> Actions:
 `KEYSTORE_BASE64` (hasil base64), `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
 Simpan `release.jks` di tempat aman; jangan commit ke repo.
+
+## Lisensi
+MIT, Hak cipta (c) 2026 @rizky._kurniawan25. Lihat berkas `LICENSE`.
 
 ## Batasan
 - Ini pembungkus WebView, bukan salinan aplikasi asli. Fitur native situs tidak ada.

@@ -3,6 +3,7 @@ package com.jrxrezkyy.webcloner
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -26,6 +27,7 @@ object SiteStore {
     private const val PREFS = "webcloner"
     private const val KEY_SITES = "sites"
     private const val KEY_PULL_REFRESH = "pull_refresh"
+    private const val KEY_THEME = "theme"
 
     private fun prefs(c: Context) = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -87,7 +89,58 @@ object SiteStore {
     fun remove(c: Context, site: Site) {
         save(c, all(c).filterNot { it.id == site.id })
         prefs(c).edit().remove("desktop_${site.id}").apply()
+        clearCustomIcon(c, site.id)
         Profiles.delete(site)
+    }
+
+    // ---- Ikon khusus (dipilih pengguna) ----
+
+    private fun customIconFile(c: Context, id: String): File {
+        val dir = File(c.filesDir, "icons")
+        dir.mkdirs()
+        return File(dir, "$id.png")
+    }
+
+    fun hasCustomIcon(c: Context, id: String): Boolean = customIconFile(c, id).exists()
+
+    fun customIcon(c: Context, id: String): Bitmap? {
+        val f = customIconFile(c, id)
+        return if (f.exists()) BitmapFactory.decodeFile(f.path) else null
+    }
+
+    fun clearCustomIcon(c: Context, id: String) {
+        customIconFile(c, id).delete()
+    }
+
+    /**
+     * Membaca gambar dari [uri], memotong persegi di tengah, memperkecil ke 256 px, lalu
+     * menyimpannya sebagai ikon akun. Dibaca dua kali: pertama hanya ukuran (supaya gambar
+     * besar tidak memenuhi memori), kedua dengan inSampleSize.
+     */
+    fun saveCustomIconFrom(c: Context, id: String, uri: Uri): Boolean {
+        return try {
+            val bounds = BitmapFactory.Options()
+            bounds.inJustDecodeBounds = true
+            c.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+            var sample = 1
+            while (bounds.outWidth / (sample * 2) >= 512 && bounds.outHeight / (sample * 2) >= 512) {
+                sample *= 2
+            }
+            val opts = BitmapFactory.Options()
+            opts.inSampleSize = sample
+            val src = c.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, opts)
+            } ?: return false
+            val side = minOf(src.width, src.height)
+            val square = Bitmap.createBitmap(src, (src.width - side) / 2, (src.height - side) / 2, side, side)
+            val scaled = Bitmap.createScaledBitmap(square, 256, 256, true)
+            customIconFile(c, id).outputStream().use { scaled.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            true
+        } catch (e: Exception) {
+            false
+        } catch (e: OutOfMemoryError) {
+            false
+        }
     }
 
     // ---- Favicon (per domain) ----
@@ -120,6 +173,13 @@ object SiteStore {
 
     fun setDesktop(c: Context, id: String, value: Boolean) {
         prefs(c).edit().putBoolean("desktop_$id", value).apply()
+    }
+
+    /** 0 = ikuti sistem, 1 = terang, 2 = gelap. */
+    fun theme(c: Context): Int = prefs(c).getInt(KEY_THEME, 0)
+
+    fun setTheme(c: Context, value: Int) {
+        prefs(c).edit().putInt(KEY_THEME, value).apply()
     }
 
     fun pullRefresh(c: Context): Boolean = prefs(c).getBoolean(KEY_PULL_REFRESH, true)

@@ -3,7 +3,18 @@
     <style name="Theme.WebCloner" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/brand</item>
         <item name="colorOnPrimary">@color/white</item>
-        <item name="android:statusBarColor">?attr/colorSurface</item>
+        <item name="android:windowBackground">@color/glass_window</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">@bool/light_bars</item>
+    </style>
+
+    <!-- Dialog kaca: jendela penuh transparan; panelnya digambar oleh GlassDialog. -->
+    <style name="GlassDialog" parent="@android:style/Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
     </style>
 </resources>

@@ -23,7 +23,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
-import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
@@ -42,22 +41,24 @@ import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
+import androidx.webkit.ScriptHandler
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import com.jrxrezkyy.webcloner.databinding.ActivityBrowserBinding
 
-class BrowserActivity : AppCompatActivity() {
+class BrowserActivity : GlassActivity() {
 
-    private lateinit var binding: ActivityBrowserBinding
+    private lateinit var binding: BrowserUi
     private lateinit var webView: WebView
     private lateinit var site: Site
     private lateinit var startUrl: String
     private lateinit var host: String
     private lateinit var defaultUserAgent: String
     private lateinit var cookieManager: CookieManager
+
+    private var desktopScript: ScriptHandler? = null
 
     /** true jika WebView ini terikat ke profil milik akun (login terpisah). */
     private var usingProfile = false
@@ -130,8 +131,12 @@ class BrowserActivity : AppCompatActivity() {
         startUrl = site.url
         host = site.host
 
-        binding = ActivityBrowserBinding.inflate(layoutInflater)
-        setContentView(binding.root)
+        binding = BrowserUi(this)
+        setGlassContent(binding.root)
+        rootFrame.addView(
+            binding.fullscreenContainer,
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        )
         webView = binding.webView
 
         updateTaskDescription(SiteStore.favicon(this, host))
@@ -184,37 +189,35 @@ class BrowserActivity : AppCompatActivity() {
     // ------------------------------------------------------------------ UI
 
     private fun setupToolbar() {
-        val toolbar = binding.toolbar
-        toolbar.title = site.name
-        toolbar.subtitle = if (site.name != host) host else null
-        toolbar.setNavigationIcon(R.drawable.ic_close)
-        toolbar.setNavigationOnClickListener { finishAndRemoveTask() }
-        toolbar.inflateMenu(R.menu.browser_menu)
-        toolbar.menu.findItem(R.id.action_desktop).isChecked = SiteStore.isDesktop(this, site.id)
-        toolbar.menu.findItem(R.id.action_pull_refresh).isChecked = SiteStore.pullRefresh(this)
-        toolbar.setOnMenuItemClickListener { onMenuItem(it) }
+        binding.titleView.text = site.name
+        binding.subtitleView.text = host
+        binding.subtitleView.visibility = if (site.name != host) View.VISIBLE else View.GONE
+        binding.closeButton.setOnClickListener { finishAndRemoveTask() }
+        binding.refreshButton.setOnClickListener { webView.reload() }
+        binding.moreButton.setOnClickListener { showMenu() }
     }
 
-    private fun onMenuItem(item: MenuItem): Boolean {
-        when (item.itemId) {
-            R.id.action_refresh -> webView.reload()
-            R.id.action_desktop -> {
-                item.isChecked = !item.isChecked
-                SiteStore.setDesktop(this, site.id, item.isChecked)
-                applyUserAgent()
-                webView.reload()
+    private fun showMenu() {
+        GlassDialog(this, sheet = true)
+            .title(site.name)
+            .subtitle(webView.url ?: startUrl)
+            .item(R.drawable.ic_refresh, R.string.refresh) { webView.reload() }
+            .toggle(R.drawable.ic_desktop, getString(R.string.desktop_mode),
+                SiteStore.isDesktop(this, site.id), true) { on ->
+                SiteStore.setDesktop(this, site.id, on)
+                applyDesktopMode(reload = true)
             }
-            R.id.action_pull_refresh -> {
-                item.isChecked = !item.isChecked
-                SiteStore.setPullRefresh(this, item.isChecked)
-                binding.swipe.isEnabled = item.isChecked
+            .toggle(R.drawable.ic_refresh, getString(R.string.pull_refresh),
+                SiteStore.pullRefresh(this), false) { on ->
+                SiteStore.setPullRefresh(this, on)
+                binding.swipe.isEnabled = on
             }
-            R.id.action_shortcut -> ShortcutHelper.pin(this, site)
-            R.id.action_external -> openExternal(Uri.parse(webView.url ?: startUrl))
-            R.id.action_clear -> confirmClearData()
-            else -> return false
-        }
-        return true
+            .item(R.drawable.ic_pin, R.string.add_shortcut) { ShortcutHelper.pin(this, site) }
+            .item(R.drawable.ic_open, R.string.open_external) {
+                openExternal(Uri.parse(webView.url ?: startUrl))
+            }
+            .item(R.drawable.ic_trash, R.string.clear_data, danger = true) { confirmClearData() }
+            .show()
     }
 
     private fun setupBackHandling() {
@@ -234,7 +237,7 @@ class BrowserActivity : AppCompatActivity() {
         setTaskDescription(
             ActivityManager.TaskDescription(
                 site.name,
-                IconFactory.create(host, favicon, 128, site.badge)
+                IconFactory.create(host, favicon, 128, site.badge, SiteStore.customIcon(this, site.id))
             )
         )
     }
@@ -266,7 +269,7 @@ class BrowserActivity : AppCompatActivity() {
         s.builtInZoomControls = true
         s.displayZoomControls = false
         s.useWideViewPort = true
-        applyUserAgent()
+        applyDesktopMode(reload = false)
 
         // Cookie milik profil akun ini (persisten) + cookie pihak ketiga untuk alur SSO/OAuth.
         cookieManager = Profiles.cookieManager(site, usingProfile)
@@ -287,23 +290,57 @@ class BrowserActivity : AppCompatActivity() {
     }
 
     /**
-     * Menghapus penanda "; wv" dan "Version/x.y" dari User-Agent bawaan WebView sehingga
-     * lebih banyak situs memperlakukannya sebagai Chrome seluler biasa.
+     * Mode desktop. Dulu hanya User-Agent yang diganti lalu halaman dimuat ulang, padahal
+     * sebagian besar situs tetap menampilkan tata letak seluler karena:
+     *  1. tag <meta name="viewport" content="width=device-width"> memaksa lebar layar HP,
+     *  2. halaman lama masih diambil dari cache, dan
+     *  3. skrip situs mendeteksi perangkat lewat navigator.platform / userAgentData.
+     * Sekarang ketiganya ditangani: viewport dipaksa selebar 1280 px (sebelum skrip situs
+     * berjalan, lewat document-start script), cache dilewati saat berpindah mode, dan
+     * identitas navigator disamarkan sebagai Linux desktop.
      */
-    private fun applyUserAgent() {
+    private fun applyDesktopMode(reload: Boolean) {
+        val desktop = SiteStore.isDesktop(this, site.id)
         val s = webView.settings
-        if (SiteStore.isDesktop(this, site.id)) {
+
+        if (desktop) {
             val chrome = Regex("Chrome/([\\d.]+)").find(defaultUserAgent)?.groupValues?.get(1)
                 ?: "120.0.0.0"
             s.userAgentString =
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
                     "Chrome/$chrome Safari/537.36"
+            s.useWideViewPort = true
             s.loadWithOverviewMode = true
         } else {
+            // Hapus "; wv" dan "Version/x.y" agar situs menganggapnya Chrome seluler biasa.
             s.userAgentString = defaultUserAgent
                 .replace("; wv", "")
                 .replace(Regex("Version/\\d+(\\.\\d+)*\\s"), "")
+            s.useWideViewPort = true
             s.loadWithOverviewMode = false
+        }
+
+        try {
+            desktopScript?.remove()
+        } catch (e: Exception) {
+            // abaikan
+        }
+        desktopScript = null
+        if (desktop) {
+            try {
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                    desktopScript = WebViewCompat.addDocumentStartJavaScript(
+                        webView, DESKTOP_JS, setOf("*")
+                    )
+                }
+            } catch (e: Exception) {
+                desktopScript = null
+            }
+        }
+
+        if (reload) {
+            s.cacheMode = WebSettings.LOAD_NO_CACHE
+            webView.loadUrl(webView.url ?: startUrl)
         }
     }
 
@@ -317,6 +354,9 @@ class BrowserActivity : AppCompatActivity() {
             binding.errorGroup.visibility = View.GONE
             binding.progress.visibility = View.VISIBLE
             view.evaluateJavascript(hookJs, null)
+            if (desktopScript == null && SiteStore.isDesktop(this@BrowserActivity, site.id)) {
+                view.evaluateJavascript(DESKTOP_JS, null)
+            }
         }
 
         override fun onPageFinished(view: WebView, url: String?) {
@@ -324,6 +364,13 @@ class BrowserActivity : AppCompatActivity() {
             binding.swipe.isRefreshing = false
             cookieManager.flush()
             view.evaluateJavascript(hookJs, null)
+            if (desktopScript == null && SiteStore.isDesktop(this@BrowserActivity, site.id)) {
+                view.evaluateJavascript(DESKTOP_JS, null)
+            }
+            // Setelah pemuatan tanpa cache (saat ganti mode), kembali ke cache normal.
+            if (view.settings.cacheMode != WebSettings.LOAD_DEFAULT) {
+                view.settings.cacheMode = WebSettings.LOAD_DEFAULT
+            }
         }
 
         override fun onReceivedError(
@@ -515,12 +562,24 @@ class BrowserActivity : AppCompatActivity() {
     }
 
     private fun askAllow(message: String, onAnswer: (Boolean) -> Unit) {
-        MaterialAlertDialogBuilder(this)
-            .setMessage(message)
-            .setPositiveButton(R.string.allow) { _, _ -> onAnswer(true) }
-            .setNegativeButton(R.string.deny) { _, _ -> onAnswer(false) }
-            .setOnCancelListener { onAnswer(false) }
-            .show()
+        var answered = false
+        val dialog = GlassDialog(this)
+            .message(message)
+            .button(R.string.deny) {
+                answered = true
+                onAnswer(false)
+            }
+            .button(R.string.allow, GlassDialog.Kind.ACCENT) {
+                answered = true
+                onAnswer(true)
+            }
+        dialog.setOnDismissListener {
+            if (!answered) {
+                answered = true
+                onAnswer(false)
+            }
+        }
+        dialog.show()
     }
 
     private fun handleWebPermission(request: PermissionRequest) {
@@ -814,9 +873,11 @@ class BrowserActivity : AppCompatActivity() {
     // ------------------------------------------------------------------ misc
 
     private fun confirmClearData() {
-        MaterialAlertDialogBuilder(this)
-            .setMessage(R.string.clear_confirm)
-            .setPositiveButton(R.string.clear_data_short) { _, _ ->
+        GlassDialog(this)
+            .title(R.string.clear_data)
+            .message(R.string.clear_confirm)
+            .button(R.string.cancel)
+            .button(R.string.clear_data_short, GlassDialog.Kind.DANGER) {
                 cookieManager.removeAllCookies(null)
                 cookieManager.flush()
                 Profiles.webStorage(site, usingProfile).deleteAllData()
@@ -825,7 +886,6 @@ class BrowserActivity : AppCompatActivity() {
                 toast(R.string.clear_done)
                 webView.loadUrl(startUrl)
             }
-            .setNegativeButton(R.string.cancel, null)
             .show()
     }
 
@@ -838,14 +898,53 @@ class BrowserActivity : AppCompatActivity() {
         private const val BRIDGE_NAME = "WCDownload"
 
         /**
-         * Intent untuk membuka satu akun. `data` unik per akun (webcloner://site/<id>) sehingga
-         * setiap akun mendapat kartu sendiri di Recents, bahkan untuk domain yang sama.
+         * Skrip mode desktop. Berjalan sebelum skrip situs (document-start). Memaksa viewport
+         * selebar 1280 px lalu menjaganya sampai halaman selesai dimuat, dan menyamarkan
+         * identitas navigator sebagai Linux desktop.
          */
-        fun createIntent(context: Context, site: Site): Intent =
-            Intent(context, BrowserActivity::class.java).apply {
-                action = Intent.ACTION_VIEW
-                data = Uri.parse("webcloner://site/${site.id}")
-                putExtra(EXTRA_SITE_ID, site.id)
-            }
+        private val DESKTOP_JS = """
+            (function() {
+              if (window.__wcDesktop) return;
+              window.__wcDesktop = true;
+              try {
+                var W = 1280;
+                var fix = function() {
+                  var m = document.querySelector('meta[name=viewport]');
+                  if (!m) {
+                    m = document.createElement('meta');
+                    m.setAttribute('name', 'viewport');
+                    (document.head || document.documentElement).appendChild(m);
+                  }
+                  var want = 'width=' + W;
+                  if (m.getAttribute('content') !== want) m.setAttribute('content', want);
+                };
+                fix();
+                var obs = new MutationObserver(fix);
+                obs.observe(document.documentElement, {
+                  childList: true, subtree: true, attributes: true, attributeFilter: ['content']
+                });
+                window.addEventListener('load', function() {
+                  fix();
+                  setTimeout(function() { obs.disconnect(); }, 2000);
+                });
+                var def = function(o, k, v) {
+                  try { Object.defineProperty(o, k, { get: function() { return v; }, configurable: true }); } catch (e) {}
+                };
+                def(Navigator.prototype, 'platform', 'Linux x86_64');
+                if (navigator.userAgentData) {
+                  var brands = navigator.userAgentData.brands;
+                  def(Navigator.prototype, 'userAgentData', {
+                    mobile: false,
+                    platform: 'Linux',
+                    brands: brands,
+                    getHighEntropyValues: function() {
+                      return Promise.resolve({ mobile: false, platform: 'Linux', brands: brands });
+                    },
+                    toJSON: function() { return { mobile: false, platform: 'Linux', brands: brands }; }
+                  });
+                }
+              } catch (e) {}
+            })();
+        """.trimIndent()
     }
 }

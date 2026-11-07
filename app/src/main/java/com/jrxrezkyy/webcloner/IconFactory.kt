@@ -1,6 +1,10 @@
 package com.jrxrezkyy.webcloner
 
+import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapShader
+import android.graphics.Matrix
+import android.graphics.Shader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -25,13 +29,37 @@ object IconFactory {
      * Jika [badge] ada (nomor akun): lencana kecil di pojok kanan bawah supaya
      * akun-akun dengan situs yang sama mudah dibedakan.
      */
-    fun create(host: String, favicon: Bitmap?, size: Int = 192, badge: String? = null): Bitmap {
+    /** Ikon akun: gambar pilihan pengguna bila ada, kalau tidak favicon atau huruf pertama. */
+    fun forSite(context: Context, site: Site, size: Int = 192, favicon: Bitmap? = null): Bitmap =
+        create(
+            site.host,
+            favicon ?: SiteStore.favicon(context, site.host),
+            size,
+            site.badge,
+            SiteStore.customIcon(context, site.id)
+        )
+
+    fun create(
+        host: String,
+        favicon: Bitmap?,
+        size: Int = 192,
+        badge: String? = null,
+        custom: Bitmap? = null
+    ): Bitmap {
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         val r = size / 2f
 
-        if (favicon != null) {
+        if (custom != null) {
+            val shader = BitmapShader(custom, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+            val m = Matrix()
+            m.setScale(size.toFloat() / custom.width, size.toFloat() / custom.height)
+            shader.setLocalMatrix(m)
+            paint.shader = shader
+            canvas.drawCircle(r, r, r, paint)
+            paint.shader = null
+        } else if (favicon != null) {
             paint.color = Color.WHITE
             canvas.drawCircle(r, r, r, paint)
             val target = size * 0.55f
