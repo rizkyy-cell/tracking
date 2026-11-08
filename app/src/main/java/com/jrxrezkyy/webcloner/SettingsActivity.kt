@@ -15,6 +15,7 @@ import com.google.android.material.materialswitch.MaterialSwitch
 class SettingsActivity : GlassActivity() {
 
     private lateinit var content: LinearLayout
+    private var introPlayed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -106,6 +107,24 @@ class SettingsActivity : GlassActivity() {
             )
         )
 
+        // ---- Ikon
+        section(R.string.icons_section, null)
+        val badge = MaterialSwitch(this)
+        badge.isChecked = SiteStore.showBadge(this)
+        badge.setOnCheckedChangeListener { _, checked ->
+            SiteStore.setShowBadge(this, checked)
+            // Pintasan yang sudah ada di layar utama ikut diperbarui.
+            ShortcutHelper.refreshAll(this)
+        }
+        group(
+            listOf(
+                row(
+                    Glass.icon(this, R.drawable.ic_image, 22, Glass.ink(this)),
+                    getString(R.string.show_badge), getString(R.string.show_badge_hint), badge
+                ) { badge.toggle() }
+            )
+        )
+
         // ---- Data
         section(R.string.data_section, null)
         group(
@@ -145,6 +164,26 @@ class SettingsActivity : GlassActivity() {
         content.addView(foot, LinearLayout.LayoutParams(Glass.MATCH, Glass.WRAP).apply {
             topMargin = dp(24)
         })
+
+        // Bagian muncul bertahap, hanya saat layar pertama dibuka (bukan setiap kembali ke sini).
+        if (!introPlayed) {
+            introPlayed = true
+            for (i in 0 until content.childCount) {
+                val v = content.getChildAt(i)
+                v.alpha = 0f
+                v.translationY = dpf(24)
+                v.animate().alpha(1f).translationY(0f)
+                    .setStartDelay(60L + i * 45L)
+                    .setDuration(420L)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator(1.8f))
+                    .start()
+            }
+        }
+    }
+
+    override fun finish() {
+        super.finish()
+        overridePendingTransition(R.anim.screen_pop_enter, R.anim.screen_pop_exit)
     }
 
     // ------------------------------------------------------------------ aksi

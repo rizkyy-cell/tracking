@@ -1,6 +1,7 @@
 package com.jrxrezkyy.webcloner
 
 import android.app.ActivityManager
+import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -36,7 +37,10 @@ object TaskLauncher {
     fun open(context: Context, site: Site) {
         if (bringToFront(context, site)) return
         try {
-            context.startActivity(intent(context, site))
+            val options = ActivityOptions.makeCustomAnimation(
+                context, R.anim.zoom_enter, R.anim.zoom_exit
+            ).toBundle()
+            context.startActivity(intent(context, site), options)
         } catch (e: Exception) {
             // Cadangan: buka tanpa flag dokumen bila sistem menolak kombinasi flag.
             try {

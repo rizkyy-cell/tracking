@@ -44,12 +44,24 @@ class GlassDialog(private val ctx: Context, private val sheet: Boolean = false) 
 
     init {
         panel.radius = ctx.dpf(30)
-        panel.solidity = 0.6f
+        // Kaca bening bila sistem bisa mengaburkan isi di belakang dialog; kalau tidak, pakai
+        // latar aplikasi dengan tint lebih pekat supaya teks tetap terbaca.
+        panel.clear = blurAvailable()
+        panel.tintStrength = 1.5f
         panel.elevationDp = 14f
         panel.isClickable = true
         box.orientation = LinearLayout.VERTICAL
         box.setPadding(ctx.dp(20), ctx.dp(20), ctx.dp(20), ctx.dp(16))
         panel.addView(box, FrameLayout.LayoutParams(Glass.MATCH, Glass.WRAP))
+    }
+
+    private fun blurAvailable(): Boolean {
+        if (Build.VERSION.SDK_INT < 31) return false
+        return try {
+            (ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager).isCrossWindowBlurEnabled
+        } catch (e: Exception) {
+            false
+        }
     }
 
     // ------------------------------------------------------------------ isi
@@ -226,12 +238,12 @@ class GlassDialog(private val ctx: Context, private val sheet: Boolean = false) 
         w.statusBarColor = Color.TRANSPARENT
         w.navigationBarColor = Color.TRANSPARENT
         w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-        w.setDimAmount(0.28f)
+        w.setDimAmount(0.12f)
         if (Build.VERSION.SDK_INT >= 31) {
             try {
                 w.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
                 val lp = w.attributes
-                lp.blurBehindRadius = 28
+                lp.blurBehindRadius = 26
                 w.attributes = lp
             } catch (e: Exception) {
                 // Perangkat tanpa blur lintas-jendela: cukup redup.
@@ -268,6 +280,18 @@ class GlassDialog(private val ctx: Context, private val sheet: Boolean = false) 
             .setDuration(260L)
             .setInterpolator(DecelerateInterpolator(1.6f))
             .start()
+        // Isi muncul bertahap, seperti menu iOS.
+        val count = minOf(box.childCount, 9)
+        for (i in 0 until count) {
+            val child = box.getChildAt(i)
+            child.alpha = 0f
+            child.translationY = ctx.dpf(10)
+            child.animate().alpha(1f).translationY(0f)
+                .setStartDelay(70L + i * 35L)
+                .setDuration(280L)
+                .setInterpolator(DecelerateInterpolator(1.5f))
+                .start()
+        }
     }
 
     override fun dismiss() {

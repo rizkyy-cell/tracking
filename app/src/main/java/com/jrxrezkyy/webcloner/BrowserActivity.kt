@@ -193,7 +193,14 @@ class BrowserActivity : GlassActivity() {
         binding.subtitleView.text = host
         binding.subtitleView.visibility = if (site.name != host) View.VISIBLE else View.GONE
         binding.closeButton.setOnClickListener { finishAndRemoveTask() }
-        binding.refreshButton.setOnClickListener { webView.reload() }
+        binding.refreshButton.setOnClickListener {
+            // Ikon berputar sekali sebagai umpan balik bahwa halaman dimuat ulang.
+            binding.refreshButton.animate().rotationBy(360f)
+                .setDuration(550L)
+                .setInterpolator(android.view.animation.DecelerateInterpolator(1.6f))
+                .start()
+            webView.reload()
+        }
         binding.moreButton.setOnClickListener { showMenu() }
     }
 
@@ -237,7 +244,7 @@ class BrowserActivity : GlassActivity() {
         setTaskDescription(
             ActivityManager.TaskDescription(
                 site.name,
-                IconFactory.create(host, favicon, 128, site.badge, SiteStore.customIcon(this, site.id))
+                IconFactory.forSite(this, site, 128, favicon)
             )
         )
     }
@@ -311,7 +318,12 @@ class BrowserActivity : GlassActivity() {
                     "Chrome/$chrome Safari/537.36"
             s.useWideViewPort = true
             s.loadWithOverviewMode = true
+            // Skala awal eksplisit agar halaman selebar 1280 px langsung pas di layar.
+            val density = resources.displayMetrics.density
+            val widthPx = if (webView.width > 0) webView.width else resources.displayMetrics.widthPixels
+            webView.setInitialScale(((widthPx / density) / 1280f * 100f).toInt().coerceIn(10, 100))
         } else {
+            webView.setInitialScale(0)
             // Hapus "; wv" dan "Version/x.y" agar situs menganggapnya Chrome seluler biasa.
             s.userAgentString = defaultUserAgent
                 .replace("; wv", "")
@@ -339,6 +351,11 @@ class BrowserActivity : GlassActivity() {
         }
 
         if (reload) {
+            Toast.makeText(
+                this,
+                if (desktop) "Mode desktop aktif" else "Mode desktop nonaktif",
+                Toast.LENGTH_SHORT
+            ).show()
             s.cacheMode = WebSettings.LOAD_NO_CACHE
             webView.loadUrl(webView.url ?: startUrl)
         }
@@ -354,7 +371,13 @@ class BrowserActivity : GlassActivity() {
             binding.errorGroup.visibility = View.GONE
             binding.progress.visibility = View.VISIBLE
             view.evaluateJavascript(hookJs, null)
-            if (desktopScript == null && SiteStore.isDesktop(this@BrowserActivity, site.id)) {
+            if (SiteStore.isDesktop(this@BrowserActivity, site.id)) {
+                view.evaluateJavascript(DESKTOP_JS, null)
+            }
+        }
+
+        override fun onPageCommitVisible(view: WebView, url: String?) {
+            if (SiteStore.isDesktop(this@BrowserActivity, site.id)) {
                 view.evaluateJavascript(DESKTOP_JS, null)
             }
         }
@@ -364,7 +387,7 @@ class BrowserActivity : GlassActivity() {
             binding.swipe.isRefreshing = false
             cookieManager.flush()
             view.evaluateJavascript(hookJs, null)
-            if (desktopScript == null && SiteStore.isDesktop(this@BrowserActivity, site.id)) {
+            if (SiteStore.isDesktop(this@BrowserActivity, site.id)) {
                 view.evaluateJavascript(DESKTOP_JS, null)
             }
             // Setelah pemuatan tanpa cache (saat ganti mode), kembali ke cache normal.
@@ -390,7 +413,7 @@ class BrowserActivity : GlassActivity() {
     private fun createChromeClient() = object : WebChromeClient() {
 
         override fun onProgressChanged(view: WebView, newProgress: Int) {
-            binding.progress.progress = newProgress
+            binding.progress.setProgress(newProgress, true)
         }
 
         override fun onReceivedIcon(view: WebView, icon: Bitmap?) {
@@ -904,33 +927,15 @@ class BrowserActivity : GlassActivity() {
          */
         private val DESKTOP_JS = """
             (function() {
-              if (window.__wcDesktop) return;
-              window.__wcDesktop = true;
+              if (window.__wcD) return;
+              window.__wcD = true;
+              var W = 1280;
+              var def = function(o, k, v) {
+                try { Object.defineProperty(o, k, { get: function() { return v; }, configurable: true }); } catch (e) {}
+              };
+              try { def(Navigator.prototype, 'platform', 'Linux x86_64'); } catch (e) {}
+              try { def(Navigator.prototype, 'maxTouchPoints', 0); } catch (e) {}
               try {
-                var W = 1280;
-                var fix = function() {
-                  var m = document.querySelector('meta[name=viewport]');
-                  if (!m) {
-                    m = document.createElement('meta');
-                    m.setAttribute('name', 'viewport');
-                    (document.head || document.documentElement).appendChild(m);
-                  }
-                  var want = 'width=' + W;
-                  if (m.getAttribute('content') !== want) m.setAttribute('content', want);
-                };
-                fix();
-                var obs = new MutationObserver(fix);
-                obs.observe(document.documentElement, {
-                  childList: true, subtree: true, attributes: true, attributeFilter: ['content']
-                });
-                window.addEventListener('load', function() {
-                  fix();
-                  setTimeout(function() { obs.disconnect(); }, 2000);
-                });
-                var def = function(o, k, v) {
-                  try { Object.defineProperty(o, k, { get: function() { return v; }, configurable: true }); } catch (e) {}
-                };
-                def(Navigator.prototype, 'platform', 'Linux x86_64');
                 if (navigator.userAgentData) {
                   var brands = navigator.userAgentData.brands;
                   def(Navigator.prototype, 'userAgentData', {
@@ -944,6 +949,40 @@ class BrowserActivity : GlassActivity() {
                   });
                 }
               } catch (e) {}
+
+              // Pada document-start, <html> belum tentu ada. Semua akses dijaga.
+              var want = 'width=' + W;
+              var fix = function() {
+                try {
+                  var root = document.documentElement;
+                  if (!root) return;
+                  var list = document.querySelectorAll('meta[name=viewport]');
+                  if (!list.length) {
+                    var m = document.createElement('meta');
+                    m.setAttribute('name', 'viewport');
+                    m.setAttribute('content', want);
+                    (document.head || root).appendChild(m);
+                    return;
+                  }
+                  for (var i = 0; i < list.length; i++) {
+                    if (list[i].getAttribute('content') !== want) list[i].setAttribute('content', want);
+                  }
+                } catch (e) {}
+              };
+              fix();
+              var obs = null;
+              try {
+                obs = new MutationObserver(fix);
+                obs.observe(document, {
+                  childList: true, subtree: true, attributes: true, attributeFilter: ['content']
+                });
+              } catch (e) {}
+              var done = function() {
+                fix();
+                setTimeout(function() { try { if (obs) obs.disconnect(); } catch (e) {} }, 2500);
+              };
+              if (document.readyState === 'complete') done();
+              else window.addEventListener('load', done);
             })();
         """.trimIndent()
     }

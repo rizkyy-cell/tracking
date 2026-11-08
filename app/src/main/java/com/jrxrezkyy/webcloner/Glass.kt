@@ -38,11 +38,11 @@ object Glass {
         (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
 
-    /** Teks utama: biru tua di mode terang, putih kebiruan di mode gelap. */
-    fun ink(ctx: Context): Int = if (night(ctx)) 0xFFEAF0FF.toInt() else 0xFF0B2F7A.toInt()
+    /** Teks utama: biru malam di mode terang, putih kebiruan di mode gelap. */
+    fun ink(ctx: Context): Int = if (night(ctx)) 0xFFF2F6FF.toInt() else 0xFF0F1B3D.toInt()
 
     /** Teks pendukung. Kontras terhadap panel kaca >= 4.5:1. */
-    fun soft(ctx: Context): Int = if (night(ctx)) 0xFFB3C1E6.toInt() else 0xFF3F5C96.toInt()
+    fun soft(ctx: Context): Int = if (night(ctx)) 0xFFB9C6E8.toInt() else 0xFF3D4F7A.toInt()
 
     fun danger(ctx: Context): Int = if (night(ctx)) 0xFFFF9AA8.toInt() else 0xFFC4203F.toInt()
 

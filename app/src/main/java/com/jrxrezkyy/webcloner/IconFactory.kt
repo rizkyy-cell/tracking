@@ -35,7 +35,7 @@ object IconFactory {
             site.host,
             favicon ?: SiteStore.favicon(context, site.host),
             size,
-            site.badge,
+            if (SiteStore.showBadge(context)) site.badge else null,
             SiteStore.customIcon(context, site.id)
         )
 

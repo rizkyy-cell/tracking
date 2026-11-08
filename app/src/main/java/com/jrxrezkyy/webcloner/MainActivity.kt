@@ -88,7 +88,10 @@ class MainActivity : GlassActivity() {
             Glass.icon(this, R.drawable.ic_settings, 22, Glass.ink(this)),
             FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER)
         )
-        settings.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
+        settings.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+            overridePendingTransition(R.anim.screen_enter, R.anim.screen_exit)
+        }
         header.addView(settings, LinearLayout.LayoutParams(dp(48), dp(48)))
         column.addView(header, LinearLayout.LayoutParams(Glass.MATCH, Glass.WRAP))
 
@@ -173,7 +176,7 @@ class MainActivity : GlassActivity() {
 
     private fun refreshList() {
         val sites = SiteStore.all(this)
-        adapter.submit(sites)
+        adapter.submit(sites, sites.associate { it.id to SiteStore.iconStamp(this, it.id) })
         emptyView.visibility = if (sites.isEmpty()) View.VISIBLE else View.GONE
         countView.text = if (sites.isEmpty()) "" else getString(R.string.account_count, sites.size)
         if (firstList) {

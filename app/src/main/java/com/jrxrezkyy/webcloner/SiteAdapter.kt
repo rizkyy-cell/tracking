@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 
 /** Daftar akun berbentuk panel kaca. Muncul bertahap sekali saat layar pertama dibuka. */
@@ -16,11 +17,27 @@ class SiteAdapter(
 ) : RecyclerView.Adapter<SiteAdapter.VH>() {
 
     private var items: List<Site> = emptyList()
+    private var stamps: Map<String, Long> = emptyMap()
     private var intro = true
 
-    fun submit(list: List<Site>) {
+    /**
+     * Memperbarui daftar dengan animasi masuk/keluar/pindah per baris (DiffUtil), bukan
+     * menggambar ulang semuanya. [newStamps] = penanda versi ikon khusus per akun, supaya baris
+     * yang ikonnya baru diganti ikut diperbarui.
+     */
+    fun submit(list: List<Site>, newStamps: Map<String, Long>) {
+        val old = items
+        val oldStamps = stamps
+        val diff = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+            override fun getOldListSize(): Int = old.size
+            override fun getNewListSize(): Int = list.size
+            override fun areItemsTheSame(o: Int, n: Int): Boolean = old[o].id == list[n].id
+            override fun areContentsTheSame(o: Int, n: Int): Boolean =
+                old[o] == list[n] && oldStamps[old[o].id] == newStamps[list[n].id]
+        })
         items = list
-        notifyDataSetChanged()
+        stamps = newStamps
+        diff.dispatchUpdatesTo(this)
     }
 
     /** Dipanggil setelah daftar pertama tampil; baris berikutnya muncul tanpa animasi masuk. */

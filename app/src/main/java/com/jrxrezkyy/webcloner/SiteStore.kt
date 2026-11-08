@@ -28,6 +28,7 @@ object SiteStore {
     private const val KEY_SITES = "sites"
     private const val KEY_PULL_REFRESH = "pull_refresh"
     private const val KEY_THEME = "theme"
+    private const val KEY_BADGE = "show_badge"
 
     private fun prefs(c: Context) = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -102,6 +103,16 @@ object SiteStore {
     }
 
     fun hasCustomIcon(c: Context, id: String): Boolean = customIconFile(c, id).exists()
+
+    /** Berubah setiap ikon khusus diganti; dipakai daftar untuk tahu kapan harus menggambar ulang. */
+    fun iconStamp(c: Context, id: String): Long = customIconFile(c, id).lastModified()
+
+    /** Tampilkan lencana angka di ikon akun ke-2 dan seterusnya. */
+    fun showBadge(c: Context): Boolean = prefs(c).getBoolean(KEY_BADGE, true)
+
+    fun setShowBadge(c: Context, value: Boolean) {
+        prefs(c).edit().putBoolean(KEY_BADGE, value).apply()
+    }
 
     fun customIcon(c: Context, id: String): Bitmap? {
         val f = customIconFile(c, id)

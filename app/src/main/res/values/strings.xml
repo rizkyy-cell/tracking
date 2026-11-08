@@ -81,4 +81,7 @@
     <string name="crash_message">Salin laporan ini dan kirim ke pembuat agar bisa diperbaiki.</string>
     <string name="crash_copy">Salin</string>
     <string name="crash_copied">Laporan disalin</string>
+    <string name="icons_section">Ikon</string>
+    <string name="show_badge">Lencana nomor di ikon</string>
+    <string name="show_badge_hint">Angka kecil pada ikon akun ke-2 dan seterusnya. Lencana biru kecil di pojok ikon layar utama dipasang oleh launcher, bukan aplikasi ini.</string>
 </resources>
