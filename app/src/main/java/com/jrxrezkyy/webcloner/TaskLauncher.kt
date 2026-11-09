@@ -35,7 +35,10 @@ object TaskLauncher {
         }
 
     fun open(context: Context, site: Site) {
-        if (bringToFront(context, site)) return
+        // Jika dipanggil dari ShortcutActivity, task perantara itu sendiri tidak boleh dianggap
+        // sebagai kartu akun (lihat findTask).
+        val ownTask = (context as? android.app.Activity)?.taskId ?: -1
+        if (bringToFront(context, site, ownTask)) return
         try {
             val options = ActivityOptions.makeCustomAnimation(
                 context, R.anim.zoom_enter, R.anim.zoom_exit
@@ -57,21 +60,29 @@ object TaskLauncher {
         }
     }
 
-    private fun findTask(context: Context, site: Site): ActivityManager.AppTask? {
+    @Suppress("DEPRECATION")
+    private fun findTask(context: Context, site: Site, ownTask: Int = -1): ActivityManager.AppTask? {
         return try {
             val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
             val wanted = dataFor(site)
             am.appTasks.firstOrNull { task ->
-                val base = task.taskInfo?.baseIntent
-                base != null && base.dataString == wanted
+                val info = task.taskInfo
+                val base = info?.baseIntent
+                if (info != null && info.persistentId == ownTask) return@firstOrNull false
+                // Hanya kartu BrowserActivity. Tanpa pemeriksaan komponen, task perantara
+                // ShortcutActivity (yang intent dasarnya membawa data yang sama) ikut cocok,
+                // sehingga "bawa ke depan" mengenai dirinya sendiri dan tidak ada yang terbuka.
+                base != null &&
+                    base.component?.className == BrowserActivity::class.java.name &&
+                    base.dataString == wanted
             }
         } catch (e: Exception) {
             null
         }
     }
 
-    private fun bringToFront(context: Context, site: Site): Boolean {
-        val task = findTask(context, site) ?: return false
+    private fun bringToFront(context: Context, site: Site, ownTask: Int): Boolean {
+        val task = findTask(context, site, ownTask) ?: return false
         return try {
             task.moveToFront()
             true

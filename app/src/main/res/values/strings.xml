@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">Web Cloner</string>
     <string name="subtitle">Masukkan alamat situs. Setiap akun punya login sendiri, jadi satu situs bisa dibuka berkali-kali dengan akun berbeda.</string>
-    <string name="hint_url">Alamat situs (contoh: tiktok.com)</string>
+    <string name="hint_url">Ketik alamat situs</string>
     <string name="open">Buka</string>
     <string name="saved_sites">Akun tersimpan</string>
     <string name="empty_sites">Belum ada akun. Masukkan alamat di atas untuk memulai.</string>

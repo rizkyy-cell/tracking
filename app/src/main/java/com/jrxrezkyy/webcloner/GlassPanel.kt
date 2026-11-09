@@ -334,16 +334,22 @@ open class GlassPanel @JvmOverloads constructor(
         super.setPressed(pressed)
         if (!pressable) return
         if (pressed) {
-            animate().scaleX(0.965f).scaleY(0.965f)
+            // Gaya iOS: saat disentuh, elemen MEMBESAR (bukan mengecil). Panel lebar tumbuh
+            // lebih sedikit, tombol kecil lebih banyak, supaya selisih tepinya kira-kira sama.
+            val grow = (context.dpf(9f) / width.coerceAtLeast(1)).coerceIn(0.025f, 0.085f)
+            val sc = 1f + grow
+            (parent as? android.view.ViewGroup)?.clipChildren = false
+            ((parent as? View)?.parent as? android.view.ViewGroup)?.clipChildren = false
+            animate().scaleX(sc).scaleY(sc)
                 .setStartDelay(0L)
-                .setDuration(110L)
-                .setInterpolator(DecelerateInterpolator())
+                .setDuration(260L)
+                .setInterpolator(OvershootInterpolator(2.2f))
                 .start()
         } else {
             animate().scaleX(1f).scaleY(1f)
                 .setStartDelay(0L)
-                .setDuration(380L)
-                .setInterpolator(OvershootInterpolator(2.4f))
+                .setDuration(420L)
+                .setInterpolator(OvershootInterpolator(1.6f))
                 .start()
         }
     }

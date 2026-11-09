@@ -14,7 +14,7 @@ object ShortcutHelper {
         val icon = IconFactory.forSite(context, site, 192)
         val intent = Intent(context, ShortcutActivity::class.java).apply {
             action = Intent.ACTION_VIEW
-            data = Uri.parse("webcloner://site/${site.id}")
+            data = Uri.parse("webcloner://shortcut/${site.id}")
             putExtra(BrowserActivity.EXTRA_SITE_ID, site.id)
         }
         return ShortcutInfoCompat.Builder(context, "site_${site.id}")
