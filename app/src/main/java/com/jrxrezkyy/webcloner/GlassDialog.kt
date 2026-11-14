@@ -1,7 +1,13 @@
 package com.jrxrezkyy.webcloner
 
+import android.app.Activity
 import android.app.Dialog
 import android.content.Context
+import android.content.ContextWrapper
+import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
+import android.view.PixelCopy
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
@@ -26,7 +32,7 @@ import com.google.android.material.materialswitch.MaterialSwitch
 /**
  * Dialog kaca: jendela penuh transparan dengan satu [GlassPanel] di tengah/bawah. Semua view
  * dibuat dengan konteks Activity (bertema Material) agar komponen Material (mis. switch) aman.
- * Pada Android 12+ latar di belakang dialog ikut dikaburkan oleh sistem (blurBehind).
+ * Kaca membiaskan potret halaman di belakangnya (lihat [show]).
  */
 class GlassDialog(private val ctx: Context, private val sheet: Boolean = false) :
     Dialog(ctx, R.style.GlassDialog) {
@@ -38,30 +44,21 @@ class GlassDialog(private val ctx: Context, private val sheet: Boolean = false) 
     private var buttons: LinearLayout? = null
     private var itemCount = 0
     private var closing = false
+    private var presenting = false
+    private var snapshot: Bitmap? = null
     private var withInput = false
     private val ink = Glass.ink(ctx)
     private val soft = Glass.soft(ctx)
 
     init {
         panel.radius = ctx.dpf(30)
-        // Kaca bening bila sistem bisa mengaburkan isi di belakang dialog; kalau tidak, pakai
-        // latar aplikasi dengan tint lebih pekat supaya teks tetap terbaca.
-        panel.clear = blurAvailable()
-        panel.tintStrength = 1.5f
+        // Kaca memakai potret layar di belakang dialog (lihat show()), bukan foto latar.
+        panel.clear = false
         panel.elevationDp = 14f
         panel.isClickable = true
         box.orientation = LinearLayout.VERTICAL
         box.setPadding(ctx.dp(20), ctx.dp(20), ctx.dp(20), ctx.dp(16))
         panel.addView(box, FrameLayout.LayoutParams(Glass.MATCH, Glass.WRAP))
-    }
-
-    private fun blurAvailable(): Boolean {
-        if (Build.VERSION.SDK_INT < 31) return false
-        return try {
-            (ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager).isCrossWindowBlurEnabled
-        } catch (e: Exception) {
-            false
-        }
     }
 
     // ------------------------------------------------------------------ isi
@@ -238,17 +235,7 @@ class GlassDialog(private val ctx: Context, private val sheet: Boolean = false) 
         w.statusBarColor = Color.TRANSPARENT
         w.navigationBarColor = Color.TRANSPARENT
         w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-        w.setDimAmount(0.12f)
-        if (Build.VERSION.SDK_INT >= 31) {
-            try {
-                w.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
-                val lp = w.attributes
-                lp.blurBehindRadius = 26
-                w.attributes = lp
-            } catch (e: Exception) {
-                // Perangkat tanpa blur lintas-jendela: cukup redup.
-            }
-        }
+        w.setDimAmount(0.10f)
         if (withInput) {
             w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE or
                 WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
@@ -256,6 +243,11 @@ class GlassDialog(private val ctx: Context, private val sheet: Boolean = false) 
 
         val root = FrameLayout(ctx)
         root.setOnClickListener { cancel() }
+        snapshot?.let { shot ->
+            val backdrop = GlassBackgroundView(ctx)
+            backdrop.useSnapshot(shot)
+            root.addView(backdrop, FrameLayout.LayoutParams(Glass.MATCH, Glass.MATCH))
+        }
         val lp = FrameLayout.LayoutParams(
             Glass.MATCH, Glass.WRAP, if (sheet) Gravity.BOTTOM else Gravity.CENTER
         )
@@ -269,7 +261,66 @@ class GlassDialog(private val ctx: Context, private val sheet: Boolean = false) 
         setContentView(root)
     }
 
+    /**
+     * Mengambil potret jendela aktivitas yang sedang tampil (PixelCopy, termasuk isi WebView),
+     * mengecilkannya ke 1/6, mengaburkan, dan mencampurnya sedikit dengan warna tema supaya
+     * teks tetap terbaca di atas halaman terang maupun gelap. Hasilnya menjadi bahan bias
+     * shader kaca, jadi kartu menu benar-benar "tembus" ke halaman di bawahnya.
+     * Jika potret gagal atau lambat (>350 ms), dialog tampil dengan latar foto seperti biasa.
+     */
     override fun show() {
+        if (presenting) return
+        presenting = true
+        val act = activityOf(ctx)
+        if (act == null || act.isFinishing || act.isDestroyed || Build.VERSION.SDK_INT < 26) {
+            present()
+            return
+        }
+        val handler = Handler(Looper.getMainLooper())
+        var settled = false
+        val settle: (Bitmap?) -> Unit = { bmp ->
+            if (!settled) {
+                settled = true
+                snapshot = bmp
+                present()
+            }
+        }
+        handler.postDelayed({ settle(null) }, 350L)
+        try {
+            val decor = act.window.decorView
+            val bmp = Bitmap.createBitmap(
+                maxOf(2, decor.width / 6), maxOf(2, decor.height / 6), Bitmap.Config.ARGB_8888
+            )
+            PixelCopy.request(act.window, bmp, PixelCopy.OnPixelCopyFinishedListener { result ->
+                if (result == PixelCopy.SUCCESS) {
+                    try {
+                        Blur.box(bmp, 2, 2)
+                        if (Glass.night(ctx)) Blur.blend(bmp, 0xFF111A3A.toInt(), 0.46f)
+                        else Blur.blend(bmp, 0xFFFFFFFF.toInt(), 0.50f)
+                        settle(bmp)
+                    } catch (e: Throwable) {
+                        settle(null)
+                    }
+                } else {
+                    settle(null)
+                }
+            }, handler)
+        } catch (e: Throwable) {
+            settle(null)
+        }
+    }
+
+    private fun activityOf(c: Context): Activity? {
+        var x: Context? = c
+        while (x is ContextWrapper) {
+            if (x is Activity) return x
+            x = x.baseContext
+        }
+        return null
+    }
+
+    private fun present() {
+        if (closing) return
         super.show()
         panel.alpha = 0f
         panel.scaleX = 0.94f

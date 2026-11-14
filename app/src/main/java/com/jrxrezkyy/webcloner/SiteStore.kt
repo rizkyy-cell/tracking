@@ -91,6 +91,7 @@ object SiteStore {
         save(c, all(c).filterNot { it.id == site.id })
         prefs(c).edit().remove("desktop_${site.id}").apply()
         clearCustomIcon(c, site.id)
+        Pwa.remove(c, site.id)
         Profiles.delete(site)
     }
 

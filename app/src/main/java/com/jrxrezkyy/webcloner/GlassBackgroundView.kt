@@ -32,6 +32,30 @@ class GlassBackgroundView(context: Context) : View(context) {
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val dst = RectF()
 
+    /**
+     * Mode potret: dipakai dialog. Isinya bukan foto latar, melainkan potret layar aktivitas di
+     * belakang dialog (sudah diburamkan), sehingga kaca dialog membiaskan halaman yang SUNGGUHAN.
+     * View ini sendiri tidak menggambar apa pun; ia hanya menyediakan [art] bagi [GlassPanel].
+     */
+    var snapshotMode = false
+        private set
+    private var snap: Bitmap? = null
+
+    fun useSnapshot(bitmap: Bitmap) {
+        snap = bitmap
+        snapshotMode = true
+        applySnapshot()
+    }
+
+    private fun applySnapshot() {
+        val b = snap ?: return
+        if (width <= 0) return
+        art = b
+        coverDx = 0f
+        coverDy = 0f
+        coverScale = width.toFloat() / b.width
+    }
+
     init {
         id = R.id.glass_bg
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
@@ -42,6 +66,10 @@ class GlassBackgroundView(context: Context) : View(context) {
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || h <= 0) return
+        if (snapshotMode) {
+            applySnapshot()
+            return
+        }
         val key = "${w}x${h}x${Glass.night(context)}"
         var entry = cache[key]
         if (entry == null) {
@@ -67,10 +95,11 @@ class GlassBackgroundView(context: Context) : View(context) {
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        last = WeakReference(this)
+        if (!snapshotMode) last = WeakReference(this)
     }
 
     override fun onDraw(canvas: Canvas) {
+        if (snapshotMode) return
         val a = art ?: return
         dst.set(coverDx, coverDy, coverDx + a.width * coverScale, coverDy + a.height * coverScale)
         canvas.drawBitmap(a, null, dst, paint)

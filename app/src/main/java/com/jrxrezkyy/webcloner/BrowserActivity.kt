@@ -19,6 +19,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Color
+import androidx.core.graphics.ColorUtils
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -60,17 +62,15 @@ class BrowserActivity : GlassActivity() {
 
     private var desktopScript: ScriptHandler? = null
 
+    // Instal aplikasi (PWA): true bila dibuka dari ikon hasil Instal.
+    private var appMode = false
+    private var pwa: PwaInfo? = null
+    private var manifestUrl: String? = null
+    private var pageTitle: String? = null
+    private var installHintShown = false
+
     /** true jika WebView ini terikat ke profil milik akun (login terpisah). */
     private var usingProfile = false
-
-    // Status unduhan blob:/data: yang sedang berjalan (satu per satu). Semua akses lewat blobLock.
-    private val blobLock = Any()
-    private var blobToken: String? = null
-    private var blobStream: OutputStream? = null
-    private var blobUri: Uri? = null
-    private var blobFile: File? = null
-    private var blobName: String = ""
-    private var blobMimeHint: String = ""
 
     /**
      * Dipasang di setiap halaman: (1) mencatat nama file dari atribut `download` pada tautan,
@@ -128,8 +128,11 @@ class BrowserActivity : GlassActivity() {
             return
         }
         site = found
-        startUrl = site.url
         host = site.host
+        appMode = intent.data?.host == "app"
+        pwa = if (appMode) Pwa.get(this, found.id) else null
+        if (pwa == null) appMode = false
+        startUrl = pwa?.startUrl ?: site.url
 
         binding = BrowserUi(this)
         setGlassContent(binding.root)
@@ -139,6 +142,7 @@ class BrowserActivity : GlassActivity() {
         )
         webView = binding.webView
 
+        if (appMode) applyStandaloneUi()
         updateTaskDescription(SiteStore.favicon(this, host))
 
         setupToolbar()
@@ -176,6 +180,9 @@ class BrowserActivity : GlassActivity() {
     }
 
     override fun onDestroy() {
+        for (stream in blobStreams.values) stream.fail("Halaman ditutup")
+        blobStreams.clear()
+        blobPending.clear()
         fileCallback?.onReceiveValue(null)
         fileCallback = null
         if (::webView.isInitialized) {
@@ -219,6 +226,14 @@ class BrowserActivity : GlassActivity() {
                 SiteStore.setPullRefresh(this, on)
                 binding.swipe.isEnabled = on
             }
+            .also { d ->
+                if (manifestUrl != null) {
+                    d.item(R.drawable.ic_install, R.string.install_app) { startInstall() }
+                }
+            }
+            .item(R.drawable.ic_folder, R.string.dl_title) {
+                startActivity(Intent(this, DownloadsActivity::class.java))
+            }
             .item(R.drawable.ic_pin, R.string.add_shortcut) { ShortcutHelper.pin(this, site) }
             .item(R.drawable.ic_open, R.string.open_external) {
                 openExternal(Uri.parse(webView.url ?: startUrl))
@@ -241,6 +256,12 @@ class BrowserActivity : GlassActivity() {
 
     @Suppress("DEPRECATION")
     private fun updateTaskDescription(favicon: Bitmap?) {
+        val info = pwa
+        if (appMode && info != null) {
+            val icon = Pwa.icon(this, site.id) ?: IconFactory.forSite(this, site, 128, favicon)
+            setTaskDescription(ActivityManager.TaskDescription(info.name, icon))
+            return
+        }
         setTaskDescription(
             ActivityManager.TaskDescription(
                 site.name,
@@ -361,6 +382,85 @@ class BrowserActivity : GlassActivity() {
         }
     }
 
+    // ------------------------------------------------------------------ Instal aplikasi (PWA)
+
+    /**
+     * Mode aplikasi: tanpa bilah Web Cloner, latar polos warna situs, seperti PWA di Chrome.
+     * Tombol Kembali tetap bekerja (mundur, lalu menutup).
+     */
+    private fun applyStandaloneUi() {
+        val info = pwa ?: return
+        if (!info.standalone) return
+        val bg = info.backgroundColor ?: info.themeColor ?: Color.WHITE
+        val bar = info.themeColor ?: bg
+        rootFrame.setBackgroundColor(bar)
+        rootFrame.getChildAt(0)?.visibility = View.GONE   // latar kaca
+        binding.bar.visibility = View.GONE
+        binding.progress.visibility = View.GONE
+        val light = ColorUtils.calculateLuminance(bar) > 0.5
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.isAppearanceLightStatusBars = light
+        controller.isAppearanceLightNavigationBars = light
+    }
+
+    /** Mencari <link rel="manifest"> di halaman; jika ada, menu menampilkan "Instal aplikasi". */
+    private fun detectManifest(view: WebView) {
+        if (appMode) return
+        view.evaluateJavascript(
+            "(function(){var l=document.querySelector('link[rel~=\"manifest\"]');return l?l.href:'';})()"
+        ) { raw ->
+            val url = try {
+                org.json.JSONTokener(raw ?: "").nextValue() as? String
+            } catch (e: Exception) {
+                null
+            }
+            val found = url?.takeIf { it.startsWith("http") }
+            if (found != manifestUrl) manifestUrl = found
+            if (found != null && !installHintShown && Pwa.get(this, site.id) == null) {
+                installHintShown = true
+                Toast.makeText(this, R.string.install_available, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun startInstall() {
+        val manifest = manifestUrl ?: return
+        val pageUrl = webView.url ?: startUrl
+        val title = pageTitle
+        val cookie = try { cookieManager.getCookie(manifest) } catch (e: Exception) { null }
+        val ua = webView.settings.userAgentString
+        Toast.makeText(this, R.string.install_preparing, Toast.LENGTH_SHORT).show()
+        Thread {
+            val result = try {
+                Pwa.fetch(manifest, pageUrl, title, cookie, ua)
+            } catch (e: Exception) {
+                null
+            }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (result == null) {
+                    Toast.makeText(this, R.string.install_failed, Toast.LENGTH_LONG).show()
+                } else {
+                    confirmInstall(result)
+                }
+            }
+        }.start()
+    }
+
+    private fun confirmInstall(result: Pwa.Result) {
+        val info = result.info
+        GlassDialog(this)
+            .title(getString(R.string.install_title, info.shortName))
+            .subtitle(UrlUtils.host(info.startUrl))
+            .message(R.string.install_message)
+            .button(R.string.cancel)
+            .button(R.string.install_confirm, GlassDialog.Kind.ACCENT) {
+                Pwa.save(this, site.id, info, result.icon)
+                ShortcutHelper.pinApp(this, site, info)
+            }
+            .show()
+    }
+
     private fun createWebViewClient() = object : WebViewClient() {
 
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -387,6 +487,7 @@ class BrowserActivity : GlassActivity() {
             binding.swipe.isRefreshing = false
             cookieManager.flush()
             view.evaluateJavascript(hookJs, null)
+            detectManifest(view)
             if (SiteStore.isDesktop(this@BrowserActivity, site.id)) {
                 view.evaluateJavascript(DESKTOP_JS, null)
             }
@@ -416,6 +517,10 @@ class BrowserActivity : GlassActivity() {
             binding.progress.setProgress(newProgress, true)
         }
 
+        override fun onReceivedTitle(view: WebView, title: String?) {
+            pageTitle = title
+        }
+
         override fun onReceivedIcon(view: WebView, icon: Bitmap?) {
             if (icon == null) return
             // Simpan hanya jika ikon berasal dari situs utama (bukan halaman SSO pihak lain).
@@ -432,12 +537,25 @@ class BrowserActivity : GlassActivity() {
         ): Boolean {
             fileCallback?.onReceiveValue(null)
             fileCallback = filePathCallback
+            // Pemilih dokumen sistem selalu mendukung pilih banyak file sekaligus (GitHub, dll.).
+            // ACTION_GET_CONTENT bawaan WebView sering membuka galeri/aplikasi lain yang hanya
+            // mengembalikan satu file, itu sebabnya dulu hanya bisa satu per satu.
+            val primary = if (fileChooserParams.isCaptureEnabled) {
+                fileChooserParams.createIntent()
+            } else {
+                buildPickerIntent(fileChooserParams)
+            }
             return try {
-                fileChooserLauncher.launch(fileChooserParams.createIntent())
+                fileChooserLauncher.launch(primary)
                 true
             } catch (e: Exception) {
-                fileCallback = null
-                false
+                try {
+                    fileChooserLauncher.launch(fileChooserParams.createIntent())
+                    true
+                } catch (e2: Exception) {
+                    fileCallback = null
+                    false
+                }
             }
         }
 
@@ -485,6 +603,40 @@ class BrowserActivity : GlassActivity() {
                         callback.invoke(origin, granted.values.any { it }, false)
                     }
                 }
+            }
+        }
+    }
+
+    /** Intent pemilih dokumen: multi-pilih bila input file memakai atribut `multiple`. */
+    private fun buildPickerIntent(params: WebChromeClient.FileChooserParams): Intent {
+        val multiple = params.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE
+        val types = LinkedHashSet<String>()
+        var unresolved = false
+        val map = android.webkit.MimeTypeMap.getSingleton()
+        for (raw in params.acceptTypes ?: emptyArray()) {
+            for (part in raw.split(',')) {
+                val t = part.trim().lowercase()
+                if (t.isEmpty()) continue
+                if (t.startsWith(".")) {
+                    val mime = map.getMimeTypeFromExtension(t.substring(1))
+                    if (mime != null) types.add(mime) else unresolved = true
+                } else if (t.contains('/')) {
+                    types.add(t)
+                } else {
+                    unresolved = true
+                }
+            }
+        }
+        return Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple)
+            if (types.isEmpty() || unresolved) {
+                type = "*/*"
+            } else if (types.size == 1) {
+                type = types.first()
+            } else {
+                type = "*/*"
+                putExtra(Intent.EXTRA_MIME_TYPES, types.toTypedArray())
             }
         }
     }
@@ -628,7 +780,17 @@ class BrowserActivity : GlassActivity() {
         }
     }
 
-    // ------------------------------------------------------------------ downloads
+    // ------------------------------------------------------------------ unduhan
+
+    /*
+     * Semua unduhan lewat mesin [Downloads]: HTTP diambil sendiri (cookie, Referer, pengalihan,
+     * nama dan format dari header respons), data: ditulis langsung, blob: dikirim bertahap oleh
+     * skrip halaman. Tiap unduhan blob memakai token acak sekali pakai, jadi banyak unduhan bisa
+     * berjalan bersamaan dan panggilan tanpa token yang cocok (iklan, iframe) diabaikan.
+     */
+
+    private val blobPending = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val blobStreams = java.util.concurrent.ConcurrentHashMap<String, Downloads.Stream>()
 
     private fun handleDownload(
         url: String,
@@ -636,82 +798,93 @@ class BrowserActivity : GlassActivity() {
         contentDisposition: String?,
         mimeType: String?
     ) {
-        if (url.startsWith("blob:") || url.startsWith("data:")) {
-            handleBlobDownload(url, mimeType)
-            return
-        }
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            toast(R.string.download_unsupported)
-            return
-        }
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-            ensurePermissions(listOf(Manifest.permission.WRITE_EXTERNAL_STORAGE)) { granted ->
-                if (granted.values.all { it }) {
-                    startDownload(url, userAgent, contentDisposition, mimeType)
-                } else {
-                    toast(R.string.storage_denied)
+        when {
+            url.startsWith("blob:") -> withDownloadPermissions { runBlobScript(url, mimeType) }
+            url.startsWith("data:") -> withDownloadPermissions { handleDataUrl(url, mimeType) }
+            url.startsWith("http://") || url.startsWith("https://") -> withDownloadPermissions {
+                readNameHint { hint ->
+                    Downloads.enqueueHttp(
+                        this,
+                        HttpReq(
+                            url,
+                            userAgent?.takeIf { it.isNotBlank() } ?: webView.settings.userAgentString,
+                            webView.url,
+                            cookieManager.getCookie(url),
+                            contentDisposition,
+                            mimeType,
+                            hint
+                        )
+                    )
+                    toast(R.string.download_queued)
                 }
             }
-        } else {
-            startDownload(url, userAgent, contentDisposition, mimeType)
+            else -> toast(R.string.download_unsupported)
         }
     }
 
-    private fun startDownload(
-        url: String,
-        userAgent: String?,
-        contentDisposition: String?,
-        mimeType: String?
-    ) {
+    /** Izin yang berguna untuk unduhan; unduhan tetap jalan walau ditolak (ada cadangan). */
+    private fun withDownloadPermissions(go: () -> Unit) {
+        val need = ArrayList<String>()
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P && Downloads.treeUri(this) == null) {
+            need.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+        if (Build.VERSION.SDK_INT >= 33 && !Downloads.askedNotificationPermission(this)) {
+            Downloads.markAskedNotificationPermission(this)
+            need.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (need.isEmpty()) go() else ensurePermissions(need) { go() }
+    }
+
+    /** Nama dari atribut `download` pada tautan yang baru diklik (dicatat oleh hookJs). */
+    private fun readNameHint(done: (String?) -> Unit) {
         try {
-            val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
-            val request = DownloadManager.Request(Uri.parse(url)).apply {
-                if (!mimeType.isNullOrBlank()) setMimeType(mimeType)
-                addRequestHeader("Cookie", cookieManager.getCookie(url) ?: "")
-                addRequestHeader("User-Agent", userAgent ?: webView.settings.userAgentString)
-                setTitle(fileName)
-                setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+            webView.evaluateJavascript(
+                "(function(){var n=window.__wcName||'';window.__wcName='';return n;})()"
+            ) { raw ->
+                val n = try {
+                    org.json.JSONTokener(raw ?: "").nextValue() as? String
+                } catch (e: Exception) {
+                    null
+                }
+                done(n?.takeIf { it.isNotBlank() })
             }
-            val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            dm.enqueue(request)
-            Toast.makeText(this, getString(R.string.download_started, fileName), Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
-            toast(R.string.download_failed)
+            done(null)
         }
     }
 
-    // ------------------------------------------------------------------ unduhan blob: / data:
-
-    /*
-     * Alamat blob: hanya ada di dalam halaman (dibuat oleh JavaScript), jadi DownloadManager
-     * tidak bisa mengambilnya. Caranya: jalankan skrip di halaman yang membaca blob itu per
-     * potongan 512 KB, lalu kirim ke aplikasi lewat jembatan JavaScript untuk ditulis ke folder
-     * Download. Setiap unduhan memakai token acak sekali pakai; panggilan tanpa token yang cocok
-     * (misalnya dari iklan atau iframe) diabaikan, sehingga halaman lain tidak bisa menulis file.
-     */
-
-    private fun handleBlobDownload(url: String, mimeType: String?) {
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-            ensurePermissions(listOf(Manifest.permission.WRITE_EXTERNAL_STORAGE)) { granted ->
-                if (granted.values.all { it }) {
-                    runBlobScript(url, mimeType)
-                } else {
-                    toast(R.string.storage_denied)
-                }
+    private fun handleDataUrl(url: String, mimeHint: String?) {
+        val comma = url.indexOf(',')
+        if (comma < 0) {
+            toast(R.string.download_failed)
+            return
+        }
+        val meta = url.substring(5, comma)
+        val payload = url.substring(comma + 1)
+        val isBase64 = meta.endsWith(";base64", ignoreCase = true)
+        val mime = meta.substringBefore(';').ifBlank { mimeHint ?: "text/plain" }
+        val bytes = try {
+            if (isBase64) {
+                Base64.decode(Uri.decode(payload), Base64.DEFAULT)
+            } else {
+                Uri.decode(payload).toByteArray(Charsets.UTF_8)
             }
-        } else {
-            runBlobScript(url, mimeType)
+        } catch (e: Exception) {
+            null
+        }
+        if (bytes == null) {
+            toast(R.string.download_failed)
+            return
+        }
+        readNameHint { name ->
+            Downloads.enqueueBytes(this, name, mime, bytes)
+            toast(R.string.download_queued)
         }
     }
 
     private fun runBlobScript(url: String, mimeType: String?) {
-        abortBlob()
         val token = UUID.randomUUID().toString()
-        synchronized(blobLock) {
-            blobToken = token
-            blobMimeHint = mimeType ?: ""
-        }
+        blobPending[token] = mimeType ?: ""
         val js = """
             (function() {
               var B = window.$BRIDGE_NAME, T = ${JSONObject.quote(token)}, U = ${JSONObject.quote(url)};
@@ -725,8 +898,8 @@ class BrowserActivity : GlassActivity() {
               x.onload = function() {
                 var blob = x.response;
                 if (!blob) { B.fail(T); return; }
-                B.begin(T, name, blob.type || '');
-                var size = blob.size, step = 524288, pos = 0;
+                B.begin(T, name, blob.type || '', String(blob.size));
+                var size = blob.size, step = 786432, pos = 0;
                 (function next() {
                   if (pos >= size) { B.finish(T); return; }
                   var end = Math.min(pos + step, size);
@@ -747,148 +920,53 @@ class BrowserActivity : GlassActivity() {
         webView.evaluateJavascript(js, null)
     }
 
-    /** Menutup dan menghapus unduhan setengah jadi. */
-    private fun abortBlob() {
-        synchronized(blobLock) {
-            try {
-                blobStream?.close()
-            } catch (e: Exception) {
-                // abaikan
-            }
-            blobStream = null
-            val uri = blobUri
-            if (uri != null) {
-                try {
-                    contentResolver.delete(uri, null, null)
-                } catch (e: Exception) {
-                    // abaikan
-                }
-            }
-            blobFile?.delete()
-            blobUri = null
-            blobFile = null
-            blobToken = null
-        }
-    }
-
-    private fun failBlob() {
-        abortBlob()
-        runOnUiThread { toast(R.string.blob_failed) }
-    }
-
-    private fun sanitizeFileName(raw: String): String =
-        raw.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]"), "_").trim().trim('.').take(120)
-
-    private fun uniqueFile(dir: File, name: String): File {
-        var file = File(dir, name)
-        if (!file.exists()) return file
-        val dot = name.lastIndexOf('.')
-        val base = if (dot > 0) name.substring(0, dot) else name
-        val ext = if (dot > 0) name.substring(dot) else ""
-        var i = 1
-        while (file.exists()) {
-            file = File(dir, "$base ($i)$ext")
-            i++
-        }
-        return file
-    }
-
     /** Dipanggil dari JavaScript (thread terpisah). Semua metode memeriksa token. */
     private inner class DownloadBridge {
 
         @JavascriptInterface
-        fun begin(token: String, name: String, mime: String) {
-            synchronized(blobLock) {
-                if (token != blobToken) return
-                try {
-                    val type = mime.ifBlank { blobMimeHint.ifBlank { "application/octet-stream" } }
-                    var fileName = sanitizeFileName(name)
-                    if (fileName.isBlank()) {
-                        fileName = URLUtil.guessFileName("http://localhost/download", null, type)
-                    }
-                    blobName = fileName
-
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        val values = ContentValues().apply {
-                            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                            put(MediaStore.MediaColumns.MIME_TYPE, type)
-                            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-                            put(MediaStore.MediaColumns.IS_PENDING, 1)
-                        }
-                        val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                            ?: throw IOException("insert gagal")
-                        blobUri = uri
-                        blobStream = contentResolver.openOutputStream(uri)
-                            ?: throw IOException("stream gagal")
-                    } else {
-                        val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                        dir.mkdirs()
-                        val file = uniqueFile(dir, fileName)
-                        blobFile = file
-                        blobName = file.name
-                        blobStream = FileOutputStream(file)
-                    }
-                } catch (e: Exception) {
-                    failBlob()
-                }
+        fun begin(token: String, name: String, mime: String, size: String) {
+            val hint = blobPending[token] ?: return
+            val stream = Downloads.beginStream(
+                this@BrowserActivity,
+                name.ifBlank { null },
+                mime.ifBlank { hint }.ifBlank { null },
+                size.toLongOrNull() ?: -1L
+            )
+            if (stream == null) {
+                blobPending.remove(token)
+                runOnUiThread { toast(R.string.blob_failed) }
+                return
             }
+            blobStreams[token] = stream
+            runOnUiThread { toast(R.string.download_queued) }
         }
 
         @JavascriptInterface
         fun chunk(token: String, base64: String) {
-            synchronized(blobLock) {
-                if (token != blobToken) return
-                val out = blobStream ?: return
-                try {
-                    out.write(Base64.decode(base64, Base64.DEFAULT))
-                } catch (e: Exception) {
-                    failBlob()
-                }
+            val stream = blobStreams[token] ?: return
+            try {
+                stream.write(Base64.decode(base64, Base64.DEFAULT))
+            } catch (e: Exception) {
+                blobStreams.remove(token)
+                blobPending.remove(token)
+                stream.fail(e.message)
             }
         }
 
         @JavascriptInterface
         fun finish(token: String) {
-            synchronized(blobLock) {
-                if (token != blobToken) return
-                try {
-                    blobStream?.flush()
-                    blobStream?.close()
-                    blobStream = null
-                    val uri = blobUri
-                    if (uri != null) {
-                        val done = ContentValues()
-                        done.put(MediaStore.MediaColumns.IS_PENDING, 0)
-                        contentResolver.update(uri, done, null, null)
-                    }
-                    val file = blobFile
-                    if (file != null) {
-                        MediaScannerConnection.scanFile(
-                            this@BrowserActivity, arrayOf(file.absolutePath), null, null
-                        )
-                    }
-                    val savedName = blobName
-                    blobUri = null
-                    blobFile = null
-                    blobToken = null
-                    runOnUiThread {
-                        Toast.makeText(
-                            this@BrowserActivity,
-                            getString(R.string.blob_saved, savedName),
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                } catch (e: Exception) {
-                    failBlob()
-                }
-            }
+            blobPending.remove(token)
+            blobStreams.remove(token)?.finish()
         }
 
         @JavascriptInterface
         fun fail(token: String) {
-            synchronized(blobLock) {
-                if (token != blobToken) return
-                failBlob()
+            val known = blobPending.remove(token) != null
+            val stream = blobStreams.remove(token)
+            if (stream != null) {
+                stream.fail("Halaman gagal menyiapkan file")
+            } else if (known) {
+                runOnUiThread { toast(R.string.blob_failed) }
             }
         }
     }

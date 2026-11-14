@@ -20,12 +20,13 @@ import android.net.Uri
  */
 object TaskLauncher {
 
-    private fun dataFor(site: Site) = "webcloner://site/${site.id}"
+    private fun dataFor(site: Site, app: Boolean = false) =
+        if (app) "webcloner://app/${site.id}" else "webcloner://site/${site.id}"
 
-    fun intent(context: Context, site: Site): Intent =
+    fun intent(context: Context, site: Site, app: Boolean = false): Intent =
         Intent(context, BrowserActivity::class.java).apply {
             action = Intent.ACTION_VIEW
-            data = Uri.parse(dataFor(site))
+            data = Uri.parse(dataFor(site, app))
             putExtra(BrowserActivity.EXTRA_SITE_ID, site.id)
             addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -34,21 +35,21 @@ object TaskLauncher {
             )
         }
 
-    fun open(context: Context, site: Site) {
+    fun open(context: Context, site: Site, app: Boolean = false) {
         // Jika dipanggil dari ShortcutActivity, task perantara itu sendiri tidak boleh dianggap
         // sebagai kartu akun (lihat findTask).
         val ownTask = (context as? android.app.Activity)?.taskId ?: -1
-        if (bringToFront(context, site, ownTask)) return
+        if (bringToFront(context, site, ownTask, app)) return
         try {
             val options = ActivityOptions.makeCustomAnimation(
                 context, R.anim.zoom_enter, R.anim.zoom_exit
             ).toBundle()
-            context.startActivity(intent(context, site), options)
+            context.startActivity(intent(context, site, app), options)
         } catch (e: Exception) {
             // Cadangan: buka tanpa flag dokumen bila sistem menolak kombinasi flag.
             try {
                 context.startActivity(
-                    intent(context, site).apply {
+                    intent(context, site, app).apply {
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK
                     }
                 )
@@ -61,10 +62,10 @@ object TaskLauncher {
     }
 
     @Suppress("DEPRECATION")
-    private fun findTask(context: Context, site: Site, ownTask: Int = -1): ActivityManager.AppTask? {
+    private fun findTask(context: Context, site: Site, ownTask: Int = -1, app: Boolean = false): ActivityManager.AppTask? {
         return try {
             val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-            val wanted = dataFor(site)
+            val wanted = dataFor(site, app)
             am.appTasks.firstOrNull { task ->
                 val info = task.taskInfo
                 val base = info?.baseIntent
@@ -81,8 +82,8 @@ object TaskLauncher {
         }
     }
 
-    private fun bringToFront(context: Context, site: Site, ownTask: Int): Boolean {
-        val task = findTask(context, site, ownTask) ?: return false
+    private fun bringToFront(context: Context, site: Site, ownTask: Int, app: Boolean): Boolean {
+        val task = findTask(context, site, ownTask, app) ?: return false
         return try {
             task.moveToFront()
             true
@@ -95,6 +96,7 @@ object TaskLauncher {
     fun close(context: Context, site: Site) {
         try {
             findTask(context, site)?.finishAndRemoveTask()
+            findTask(context, site, app = true)?.finishAndRemoveTask()
         } catch (e: Exception) {
             // abaikan
         }

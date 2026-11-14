@@ -25,6 +25,36 @@ object ShortcutHelper {
             .build()
     }
 
+    private fun appInfo(context: Context, site: Site, pwa: PwaInfo): ShortcutInfoCompat {
+        val fallback = IconFactory.create(site.host, SiteStore.favicon(context, site.host), 192)
+        val icon = Pwa.adaptiveIcon(pwa, Pwa.icon(context, site.id), fallback)
+        val intent = Intent(context, ShortcutActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            data = Uri.parse("webcloner://shortcutapp/${site.id}")
+            putExtra(BrowserActivity.EXTRA_SITE_ID, site.id)
+        }
+        return ShortcutInfoCompat.Builder(context, "app_${site.id}")
+            .setShortLabel(pwa.shortName)
+            .setLongLabel(pwa.name)
+            .setIcon(IconCompat.createWithAdaptiveBitmap(icon))
+            .setIntent(intent)
+            .build()
+    }
+
+    /** Memasang situs sebagai "aplikasi" (hasil Instal) di layar utama. */
+    fun pinApp(context: Context, site: Site, pwa: PwaInfo) {
+        if (!ShortcutManagerCompat.isRequestPinShortcutSupported(context)) {
+            Toast.makeText(context, R.string.shortcut_unsupported, Toast.LENGTH_LONG).show()
+            return
+        }
+        val requested = ShortcutManagerCompat.requestPinShortcut(context, appInfo(context, site, pwa), null)
+        Toast.makeText(
+            context,
+            if (requested) R.string.shortcut_requested else R.string.shortcut_unsupported,
+            Toast.LENGTH_LONG
+        ).show()
+    }
+
     /** Meminta launcher menambahkan ikon akun ini ke layar utama. */
     fun pin(context: Context, site: Site) {
         if (!ShortcutManagerCompat.isRequestPinShortcutSupported(context)) {
@@ -54,7 +84,12 @@ object ShortcutHelper {
 
     fun refreshAll(context: Context) {
         try {
-            val list = SiteStore.all(context).map { info(context, it) }
+            val sites = SiteStore.all(context)
+            val list = ArrayList<ShortcutInfoCompat>()
+            for (site in sites) {
+                list.add(info(context, site))
+                Pwa.get(context, site.id)?.let { list.add(appInfo(context, site, it)) }
+            }
             if (list.isNotEmpty()) ShortcutManagerCompat.updateShortcuts(context, list)
         } catch (e: Exception) {
             // abaikan

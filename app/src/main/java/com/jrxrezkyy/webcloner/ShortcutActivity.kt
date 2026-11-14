@@ -17,7 +17,7 @@ class ShortcutActivity : Activity() {
             ?: intent?.data?.lastPathSegment
         val site = if (id != null) SiteStore.get(this, id) else null
         if (site != null) {
-            TaskLauncher.open(this, site)
+            TaskLauncher.open(this, site, intent?.data?.host == "shortcutapp")
         } else {
             Toast.makeText(this, R.string.account_missing, Toast.LENGTH_LONG).show()
         }
