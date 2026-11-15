@@ -10,12 +10,25 @@ import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.OutputStream
+
+/** Tujuan unduhan yang ditentukan per situs (lihat [DownloadLocation]). */
+sealed class Dest {
+    /** Folder Download publik HP. */
+    object Default : Dest()
+
+    /** Folder tetap pilihan pengguna (pohon dokumen SAF). */
+    class Tree(val uri: Uri) : Dest()
+
+    /** Satu file yang dipilih pengguna lewat "Simpan sebagai" (ACTION_CREATE_DOCUMENT). */
+    class Doc(val uri: Uri) : Dest()
+}
 
 /**
  * Tempat tujuan satu file unduhan. [commit] dipanggil setelah semua byte tertulis dan stream
@@ -29,31 +42,65 @@ class SinkTarget(
     val abort: () -> Unit
 )
 
-/**
- * Pemilih tujuan: folder pilihan pengguna (SAF) bila ada dan masih bisa diakses; jika tidak,
- * folder Download publik (MediaStore di Android 10+, berkas langsung di Android 9 ke bawah).
- */
 object Sinks {
 
-    fun open(c: Context, name: String, mime: String): SinkTarget {
-        val tree = Downloads.treeUri(c)
-        if (tree != null) {
+    /**
+     * Pilihan eksplisit pengguna tidak boleh diam-diam dialihkan: bila file yang dipilih
+     * ([Dest.Doc]) gagal dibuka, kesalahan dilempar agar tampil. Folder tetap ([Dest.Tree])
+     * yang tidak bisa diakses lagi jatuh ke Download, dengan keterangan di daftar unduhan.
+     */
+    fun open(c: Context, name: String, mime: String, dest: Dest): SinkTarget {
+        if (dest is Dest.Doc) {
             try {
-                return openTree(c, tree, name, mime)
+                return openDoc(c, dest.uri, name)
             } catch (e: Exception) {
-                // Izin folder hilang atau folder dihapus: jatuh ke folder Download bawaan.
+                Diag.log("sink", "file pilihan gagal dibuka: " + Diag.err(e))
+                throw e
             }
         }
-        val target = openDefault(c, name, mime)
-        return if (tree != null) {
-            SinkTarget(target.stream, target.name, c.getString(R.string.dl_folder_fallback),
-                target.commit, target.abort)
-        } else {
-            target
+        if (dest is Dest.Tree) {
+            try {
+                return openTree(c, dest.uri, name, mime)
+            } catch (e: Exception) {
+                Diag.log("sink", "folder pilihan gagal: " + Diag.err(e))
+                val t = openDefault(c, name, mime)
+                return SinkTarget(t.stream, t.name, c.getString(R.string.dl_folder_fallback), t.commit, t.abort)
+            }
         }
+        return openDefault(c, name, mime)
     }
 
-    // ------------------------------------------------------------------ folder pilihan (SAF)
+    // ------------------------------------------------------------------ file pilihan ("Simpan sebagai")
+
+    private fun openDoc(c: Context, uri: Uri, fallbackName: String): SinkTarget {
+        val resolver = c.contentResolver
+        val out = resolver.openOutputStream(uri, "wt") ?: throw IOException("openOutputStream null")
+        var shown = fallbackName
+        try {
+            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                if (it.moveToFirst()) it.getString(0)?.let { n -> shown = n }
+            }
+        } catch (e: Exception) {
+            // nama cadangan cukup
+        }
+        return SinkTarget(
+            out, shown, c.getString(R.string.dl_folder_chosen),
+            { uri },
+            {
+                try {
+                    DocumentsContract.deleteDocument(resolver, uri)
+                } catch (e: Exception) {
+                    try {
+                        resolver.delete(uri, null, null)
+                    } catch (e2: Exception) {
+                        // abaikan
+                    }
+                }
+            }
+        )
+    }
+
+    // ------------------------------------------------------------------ folder tetap (SAF)
 
     private fun openTree(c: Context, tree: Uri, name: String, mime: String): SinkTarget {
         val resolver = c.contentResolver
@@ -73,7 +120,7 @@ object Sinks {
             ?: throw IOException("createDocument gagal")
         val out = resolver.openOutputStream(doc, "w") ?: throw IOException("openOutputStream gagal")
         return SinkTarget(
-            out, unique, Downloads.folderLabel(c),
+            out, unique, Downloads.treeLabel(c, tree),
             { doc },
             {
                 try {
@@ -88,12 +135,27 @@ object Sinks {
     // ------------------------------------------------------------------ folder Download bawaan
 
     private fun openDefault(c: Context, name: String, mime: String): SinkTarget {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            openMediaStore(c, name, mime)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                return openMediaStore(c, name, mime)
+            } catch (e: Exception) {
+                // Beberapa ROM menolak MediaStore: simpan di folder aplikasi agar tidak gagal total.
+                Diag.log("sink", "MediaStore gagal: " + Diag.err(e))
+            }
+            return openFile(c, name, mime, appDir(c), false)
+        }
+        val granted = ContextCompat.checkSelfPermission(
+            c, Manifest.permission.WRITE_EXTERNAL_STORAGE
+        ) == PackageManager.PERMISSION_GRANTED
+        return if (granted) {
+            openFile(c, name, mime, Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), true)
         } else {
-            openLegacy(c, name, mime)
+            openFile(c, name, mime, appDir(c), false)
         }
     }
+
+    private fun appDir(c: Context): File =
+        c.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: c.filesDir
 
     private fun openMediaStore(c: Context, name: String, mime: String): SinkTarget {
         val resolver = c.contentResolver
@@ -137,23 +199,15 @@ object Sinks {
         )
     }
 
-    private fun openLegacy(c: Context, name: String, mime: String): SinkTarget {
-        val granted = ContextCompat.checkSelfPermission(
-            c, Manifest.permission.WRITE_EXTERNAL_STORAGE
-        ) == PackageManager.PERMISSION_GRANTED
-        val dir: File = if (granted) {
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        } else {
-            c.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: c.filesDir
-        }
+    private fun openFile(c: Context, name: String, mime: String, dir: File, scan: Boolean): SinkTarget {
         dir.mkdirs()
         val file = uniqueFile(dir, name)
         val out = FileOutputStream(file)
         return SinkTarget(
             out, file.name,
-            if (granted) c.getString(R.string.dl_folder_default) else c.getString(R.string.dl_folder_app),
+            if (scan) c.getString(R.string.dl_folder_default) else c.getString(R.string.dl_folder_app),
             {
-                if (granted) {
+                if (scan) {
                     MediaScannerConnection.scanFile(c, arrayOf(file.absolutePath), arrayOf(mime), null)
                 }
                 FileProvider.getUriForFile(c, c.packageName + ".files", file)

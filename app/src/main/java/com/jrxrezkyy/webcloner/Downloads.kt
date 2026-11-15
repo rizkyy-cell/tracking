@@ -44,6 +44,9 @@ class DownloadItem(val id: Long, @Volatile var name: String, val createdAt: Long
     @Volatile var cancel: Boolean = false
     @Volatile var request: HttpReq? = null
 
+    /** Tujuan simpan; hanya di memori (setelah aplikasi dimulai ulang, coba lagi memakai Download). */
+    @Volatile var dest: Dest = Dest.Default
+
     val active: Boolean get() = status == DlStatus.QUEUED || status == DlStatus.RUNNING
 }
 
@@ -62,8 +65,7 @@ object Downloads {
 
     private const val PREFS = "webcloner"
     private const val KEY_HISTORY = "dl_history"
-    private const val KEY_TREE = "dl_tree"
-    private const val KEY_ASKED_NOTIF = "dl_asked_notif"
+        private const val KEY_ASKED_NOTIF = "dl_asked_notif"
     private const val KEEP = 60
 
     private val items = CopyOnWriteArrayList<DownloadItem>()
@@ -112,29 +114,10 @@ object Downloads {
         }
     }
 
-    // ------------------------------------------------------------------ pengaturan folder
+    // ------------------------------------------------------------------ label folder
 
-    fun treeUri(c: Context): Uri? =
-        prefs(c).getString(KEY_TREE, null)?.let { Uri.parse(it) }
-
-    fun setTree(c: Context, uri: Uri?) {
-        val old = treeUri(c)
-        if (old != null && old != uri) {
-            try {
-                c.contentResolver.releasePersistableUriPermission(
-                    old, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-            } catch (e: Exception) {
-                // sudah tidak berlaku
-            }
-        }
-        prefs(c).edit().apply {
-            if (uri == null) remove(KEY_TREE) else putString(KEY_TREE, uri.toString())
-        }.apply()
-    }
-
-    fun folderLabel(c: Context): String {
-        val tree = treeUri(c) ?: return c.getString(R.string.dl_folder_default)
+    /** Nama folder yang enak dibaca dari Uri pohon dokumen, mis. "Download/Laporan". */
+    fun treeLabel(c: Context, tree: Uri): String {
         return try {
             val id = android.provider.DocumentsContract.getTreeDocumentId(tree)
             id.substringAfter(':', id).ifBlank { c.getString(R.string.dl_folder_default) }
@@ -151,7 +134,15 @@ object Downloads {
 
     // ------------------------------------------------------------------ antrean
 
-    fun enqueueHttp(c: Context, req: HttpReq): DownloadItem {
+    /** Perkiraan nama + mime sebelum respons datang; dipakai sebagai nama usulan "Simpan sebagai". */
+    fun guessName(req: HttpReq): Pair<String, String> {
+        val raw = FileNames.fromDisposition(req.dispositionHint)
+            ?: req.nameHint?.takeIf { it.isNotBlank() }
+            ?: FileNames.fromUrl(req.url)
+        return FileNames.resolve(raw, req.mimeHint)
+    }
+
+    fun enqueueHttp(c: Context, req: HttpReq, dest: Dest): DownloadItem {
         val app = c.applicationContext
         load(app)
         val guess = FileNames.sanitize(
@@ -162,6 +153,8 @@ object Downloads {
         )
         val item = DownloadItem(ids.incrementAndGet(), guess.ifBlank { "unduhan" }, System.currentTimeMillis())
         item.request = req
+        item.dest = dest
+        Diag.log("unduh", "http " + Uri.parse(req.url).host + " nama=" + item.name)
         items.add(0, item)
         DownloadService.ensure(app)
         changed()
@@ -170,7 +163,7 @@ object Downloads {
     }
 
     /** Unduhan yang isinya sudah ada di memori (alamat data:). */
-    fun enqueueBytes(c: Context, rawName: String?, mime: String?, bytes: ByteArray) {
+    fun enqueueBytes(c: Context, rawName: String?, mime: String?, bytes: ByteArray, dest: Dest) {
         val app = c.applicationContext
         load(app)
         val (name, finalMime) = FileNames.resolve(rawName, mime)
@@ -183,7 +176,7 @@ object Downloads {
             item.status = DlStatus.RUNNING
             var sink: SinkTarget? = null
             try {
-                sink = Sinks.open(app, name, finalMime)
+                sink = Sinks.open(app, name, finalMime, dest)
                 item.name = sink.name
                 item.mime = finalMime
                 item.where = sink.where
@@ -195,6 +188,7 @@ object Downloads {
                 sink = null
                 finish(app, item, DlStatus.DONE, null)
             } catch (e: Throwable) {
+                Diag.log("unduh", "data gagal: " + Diag.err(e))
                 abortSink(sink)
                 finish(app, item, DlStatus.FAILED, friendly(e))
             }
@@ -247,23 +241,28 @@ object Downloads {
         }
     }
 
-    fun beginStream(c: Context, rawName: String?, mime: String?, total: Long): Stream? {
+    class StreamResult(val stream: Stream?, val error: String?)
+
+    fun beginStream(c: Context, rawName: String?, mime: String?, total: Long, dest: Dest): StreamResult {
         val app = c.applicationContext
         load(app)
         return try {
             val (name, finalMime) = FileNames.resolve(rawName, mime)
-            val sink = Sinks.open(app, name, finalMime)
+            val sink = Sinks.open(app, name, finalMime, dest)
             val item = DownloadItem(ids.incrementAndGet(), sink.name, System.currentTimeMillis())
             item.status = DlStatus.RUNNING
             item.total = total
             item.mime = finalMime
             item.where = sink.where
+            item.dest = dest
             items.add(0, item)
             DownloadService.ensure(app)
+            Diag.log("unduh", "blob nama=" + sink.name + " ukuran=" + total + " tujuan=" + sink.where)
             changed()
-            Stream(app, item, sink)
+            StreamResult(Stream(app, item, sink), null)
         } catch (e: Throwable) {
-            null
+            Diag.log("unduh", "blob gagal dibuka: " + Diag.err(e))
+            StreamResult(null, friendly(e))
         }
     }
 
@@ -355,7 +354,7 @@ object Downloads {
                 ?: FileNames.fromUrl(conn.url.toString())
                 ?: FileNames.fromUrl(req.url)
             val (name, mime) = FileNames.resolve(raw, conn.contentType ?: req.mimeHint)
-            sink = Sinks.open(c, name, mime)
+            sink = Sinks.open(c, name, mime, item.dest)
             item.name = sink.name
             item.mime = mime
             item.where = sink.where
@@ -381,6 +380,7 @@ object Downloads {
             abortSink(sink)
             finish(c, item, DlStatus.CANCELED, null)
         } catch (e: Throwable) {
+            Diag.log("unduh", "http gagal: " + Diag.err(e))
             abortSink(sink)
             finish(c, item, DlStatus.FAILED, friendly(e))
         } finally {

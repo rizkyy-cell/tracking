@@ -108,12 +108,9 @@
     <string name="dl_status_failed">Gagal mengunduh</string>
     <string name="dl_status_canceled">Dibatalkan</string>
     <string name="dl_saved">Tersimpan: %1$s</string>
-    <string name="dl_folder">Folder unduhan</string>
     <string name="dl_folder_default">Download</string>
     <string name="dl_folder_app">Folder aplikasi (izin penyimpanan belum diberikan)</string>
     <string name="dl_folder_fallback">Download (folder pilihan tidak bisa diakses)</string>
-    <string name="dl_folder_pick">Pilih folder…</string>
-    <string name="dl_folder_reset">Kembalikan ke Download</string>
     <string name="dl_list_hint">Lihat, buka, dan kelola unduhan</string>
     <string name="dl_channel_progress">Unduhan berjalan</string>
     <string name="dl_channel_done">Unduhan selesai</string>
@@ -122,4 +119,23 @@
     <string name="dl_notif_done">Unduhan selesai. Ketuk untuk membuka.</string>
     <string name="dl_notif_failed">Gagal: %1$s</string>
     <string name="download_queued">Unduhan ditambahkan. Lihat di menu ⋮ › Unduhan.</string>
+    <string name="dl_folder_chosen">Lokasi pilihan Anda</string>
+    <string name="dl_location">Lokasi unduhan</string>
+    <string name="dl_loc_ask">Tanya setiap kali</string>
+    <string name="dl_loc_folder">Folder tetap…</string>
+    <string name="dl_loc_folder_named">Folder tetap: %1$s</string>
+    <string name="dl_loc_default">Folder Download</string>
+    <string name="dl_loc_first_title">Simpan unduhan situs ini di mana?</string>
+    <string name="dl_loc_explain">Di layar pilihan file manager Anda bisa memilih folder mana pun atau membuat folder baru.</string>
+    <string name="dl_canceled">Unduhan dibatalkan</string>
+    <string name="dl_picker_missing">Tidak ada pemilih file di HP ini</string>
+    <string name="blob_failed_reason">Gagal menyimpan file: %1$s</string>
+    <string name="diag_title">Diagnostik</string>
+    <string name="diag_row_hint">Catatan teknis untuk mencari penyebab masalah</string>
+    <string name="diag_hint">Salin catatan ini dan kirim bila unduhan masih gagal.</string>
+    <string name="diag_empty">Belum ada catatan.</string>
+    <string name="diag_copy">Salin</string>
+    <string name="diag_clear">Hapus catatan</string>
+    <string name="diag_cleared">Catatan dihapus</string>
+    <string name="diag_copied">Catatan disalin</string>
 </resources>

@@ -89,6 +89,20 @@ class BrowserActivity : GlassActivity() {
             while (t && t.tagName !== 'A') t = t.parentElement;
             rec(t);
           }, true);
+          window.__wcBlobs = window.__wcBlobs || {};
+          window.__wcBlobOrder = window.__wcBlobOrder || [];
+          var origCreate = URL.createObjectURL;
+          URL.createObjectURL = function(o) {
+            var u = origCreate.apply(URL, arguments);
+            try {
+              if (o && typeof o.size === 'number') {
+                window.__wcBlobs[u] = o;
+                window.__wcBlobOrder.push(u);
+                while (window.__wcBlobOrder.length > 8) delete window.__wcBlobs[window.__wcBlobOrder.shift()];
+              }
+            } catch (e) {}
+            return u;
+          };
           var origRevoke = URL.revokeObjectURL;
           URL.revokeObjectURL = function(u) {
             setTimeout(function() { try { origRevoke.call(URL, u); } catch (e) {} }, 60000);
@@ -183,6 +197,9 @@ class BrowserActivity : GlassActivity() {
         for (stream in blobStreams.values) stream.fail("Halaman ditutup")
         blobStreams.clear()
         blobPending.clear()
+        blobWaiting.clear()
+        saveQueue.clear()
+        saveActive = null
         fileCallback?.onReceiveValue(null)
         fileCallback = null
         if (::webView.isInitialized) {
@@ -231,8 +248,11 @@ class BrowserActivity : GlassActivity() {
                     d.item(R.drawable.ic_install, R.string.install_app) { startInstall() }
                 }
             }
-            .item(R.drawable.ic_folder, R.string.dl_title) {
+            .item(R.drawable.ic_open, R.string.dl_title) {
                 startActivity(Intent(this, DownloadsActivity::class.java))
+            }
+            .item(R.drawable.ic_folder, R.string.dl_location) {
+                DownloadLocation.choose(this, site, false) {}
             }
             .item(R.drawable.ic_pin, R.string.add_shortcut) { ShortcutHelper.pin(this, site) }
             .item(R.drawable.ic_open, R.string.open_external) {
@@ -792,30 +812,106 @@ class BrowserActivity : GlassActivity() {
     private val blobPending = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val blobStreams = java.util.concurrent.ConcurrentHashMap<String, Downloads.Stream>()
 
+    /** Unduhan blob yang menunggu pengguna memilih lokasi simpan. */
+    private class BlobWait(val name: String, val mime: String, val size: Long)
+
+    private val blobWaiting = java.util.concurrent.ConcurrentHashMap<String, BlobWait>()
+
+    // ---- Antrean "Simpan sebagai" (satu picker pada satu waktu) ----
+
+    private class SaveRequest(val name: String, val mime: String, val done: (Uri?) -> Unit)
+
+    private val saveQueue = java.util.ArrayDeque<SaveRequest>()
+    private var saveActive: SaveRequest? = null
+
+    private val saveLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+            val req = saveActive
+            saveActive = null
+            val uri = if (r.resultCode == RESULT_OK) r.data?.data else null
+            req?.done?.invoke(uri)
+            pumpSave()
+        }
+
+    private fun requestSave(name: String, mime: String, done: (Uri?) -> Unit) {
+        saveQueue.add(SaveRequest(name, mime, done))
+        pumpSave()
+    }
+
+    private fun pumpSave() {
+        if (saveActive != null) return
+        val req = saveQueue.poll() ?: return
+        saveActive = req
+        try {
+            val i = Intent(Intent.ACTION_CREATE_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType(req.mime.ifBlank { "application/octet-stream" })
+                .putExtra(Intent.EXTRA_TITLE, req.name)
+            saveLauncher.launch(i)
+        } catch (e: Exception) {
+            Diag.log("unduh", "picker simpan gagal: " + Diag.err(e))
+            saveActive = null
+            toast(R.string.dl_picker_missing)
+            req.done(null)
+            pumpSave()
+        }
+    }
+
+    /**
+     * Menentukan tujuan sesuai pengaturan situs ini. Harus di thread utama. [go] menerima null
+     * bila pengguna membatalkan pemilihan lokasi.
+     */
+    private fun resolveDest(name: String, mime: String, go: (Dest?) -> Unit) {
+        var mode = SiteStore.dlMode(this, site.id)
+        if (mode == SiteStore.DL_FOLDER) {
+            val tree = SiteStore.dlTree(this, site.id)
+            val valid = tree != null && contentResolver.persistedUriPermissions.any {
+                it.uri == tree && it.isWritePermission
+            }
+            if (valid) {
+                go(Dest.Tree(tree!!))
+                return
+            }
+            Diag.log("unduh", "folder tetap tidak valid, tanya lokasi")
+            mode = SiteStore.DL_ASK
+        }
+        if (mode == SiteStore.DL_DEFAULT) {
+            go(Dest.Default)
+            return
+        }
+        requestSave(name, mime) { uri -> go(uri?.let { Dest.Doc(it) }) }
+    }
+
     private fun handleDownload(
         url: String,
         userAgent: String?,
         contentDisposition: String?,
         mimeType: String?
     ) {
+        Diag.log("unduh", "diminta: " + url.take(12) + " mime=" + mimeType)
         when {
             url.startsWith("blob:") -> withDownloadPermissions { runBlobScript(url, mimeType) }
             url.startsWith("data:") -> withDownloadPermissions { handleDataUrl(url, mimeType) }
             url.startsWith("http://") || url.startsWith("https://") -> withDownloadPermissions {
                 readNameHint { hint ->
-                    Downloads.enqueueHttp(
-                        this,
-                        HttpReq(
-                            url,
-                            userAgent?.takeIf { it.isNotBlank() } ?: webView.settings.userAgentString,
-                            webView.url,
-                            cookieManager.getCookie(url),
-                            contentDisposition,
-                            mimeType,
-                            hint
-                        )
+                    val req = HttpReq(
+                        url,
+                        userAgent?.takeIf { it.isNotBlank() } ?: webView.settings.userAgentString,
+                        webView.url,
+                        cookieManager.getCookie(url),
+                        contentDisposition,
+                        mimeType,
+                        hint
                     )
-                    toast(R.string.download_queued)
+                    val (name, mime) = Downloads.guessName(req)
+                    resolveDest(name, mime) { dest ->
+                        if (dest == null) {
+                            toast(R.string.dl_canceled)
+                        } else {
+                            Downloads.enqueueHttp(this, req, dest)
+                            toast(R.string.download_queued)
+                        }
+                    }
                 }
             }
             else -> toast(R.string.download_unsupported)
@@ -825,7 +921,9 @@ class BrowserActivity : GlassActivity() {
     /** Izin yang berguna untuk unduhan; unduhan tetap jalan walau ditolak (ada cadangan). */
     private fun withDownloadPermissions(go: () -> Unit) {
         val need = ArrayList<String>()
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P && Downloads.treeUri(this) == null) {
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+            SiteStore.dlMode(this, site.id) == SiteStore.DL_DEFAULT
+        ) {
             need.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
         if (Build.VERSION.SDK_INT >= 33 && !Downloads.askedNotificationPermission(this)) {
@@ -876,29 +974,37 @@ class BrowserActivity : GlassActivity() {
             toast(R.string.download_failed)
             return
         }
-        readNameHint { name ->
-            Downloads.enqueueBytes(this, name, mime, bytes)
-            toast(R.string.download_queued)
+        readNameHint { hint ->
+            val (name, finalMime) = FileNames.resolve(hint, mime)
+            resolveDest(name, finalMime) { dest ->
+                if (dest == null) {
+                    toast(R.string.dl_canceled)
+                } else {
+                    Downloads.enqueueBytes(this, hint, mime, bytes, dest)
+                    toast(R.string.download_queued)
+                }
+            }
         }
     }
 
+    /**
+     * Blob: skrip halaman memakai objek Blob asli yang disimpan hookJs (kebal CSP dan
+     * revokeObjectURL); bila tidak ada, jatuh ke XMLHttpRequest. Sebelum mengirim data, skrip
+     * bertanya ke aplikasi lewat B.begin: "go" (lanjut), "wait" (menunggu pengguna memilih
+     * lokasi; aplikasi memanggil window.__wcWait[token]) atau "fail".
+     */
     private fun runBlobScript(url: String, mimeType: String?) {
         val token = UUID.randomUUID().toString()
         blobPending[token] = mimeType ?: ""
+        Diag.log("unduh", "blob mulai")
         val js = """
             (function() {
-              var B = window.$BRIDGE_NAME, T = ${JSONObject.quote(token)}, U = ${JSONObject.quote(url)};
+              var B = window.${BRIDGE_NAME}, T = ${JSONObject.quote(token)}, U = ${JSONObject.quote(url)};
               var name = window.__wcName || '';
               window.__wcName = '';
               if (!B) return;
-              var x = new XMLHttpRequest();
-              x.open('GET', U, true);
-              x.responseType = 'blob';
-              x.onerror = function() { B.fail(T); };
-              x.onload = function() {
-                var blob = x.response;
-                if (!blob) { B.fail(T); return; }
-                B.begin(T, name, blob.type || '', String(blob.size));
+              var bad = function(why) { try { B.fail(T, String(why || '')); } catch (e) {} };
+              var send = function(blob) {
                 var size = blob.size, step = 786432, pos = 0;
                 (function next() {
                   if (pos >= size) { B.finish(T); return; }
@@ -910,35 +1016,92 @@ class BrowserActivity : GlassActivity() {
                     pos = end;
                     setTimeout(next, 0);
                   };
-                  r.onerror = function() { B.fail(T); };
+                  r.onerror = function() { bad('FileReader'); };
                   r.readAsDataURL(blob.slice(pos, end));
                 })();
               };
-              x.send();
+              var start = function(blob) {
+                var r;
+                try { r = B.begin(T, name, blob.type || '', String(blob.size)); } catch (e) { bad('begin: ' + e); return; }
+                if (r === 'go') { send(blob); }
+                else if (r === 'wait') {
+                  window.__wcWait = window.__wcWait || {};
+                  window.__wcWait[T] = function(ok) {
+                    delete window.__wcWait[T];
+                    if (ok) send(blob);
+                  };
+                }
+              };
+              var stored = window.__wcBlobs && window.__wcBlobs[U];
+              if (stored) { start(stored); return; }
+              try {
+                var x = new XMLHttpRequest();
+                x.open('GET', U, true);
+                x.responseType = 'blob';
+                x.onerror = function() { bad('XHR ditolak (CSP atau blob sudah dicabut)'); };
+                x.onload = function() {
+                  if (!x.response) { bad('blob kosong'); return; }
+                  start(x.response);
+                };
+                x.send();
+              } catch (e) { bad('XHR: ' + e); }
             })();
         """.trimIndent()
         webView.evaluateJavascript(js, null)
+    }
+
+    private fun jsResume(token: String, ok: Boolean) {
+        val call = "(function(){var w=window.__wcWait;if(w&&w[" + JSONObject.quote(token) + "])w[" +
+            JSONObject.quote(token) + "](" + ok + ");})();"
+        try {
+            webView.evaluateJavascript(call, null)
+        } catch (e: Exception) {
+            Diag.log("unduh", "jsResume gagal: " + Diag.err(e))
+        }
+    }
+
+    private fun startBlob(token: String, w: BlobWait, dest: Dest): Boolean {
+        val res = Downloads.beginStream(this, w.name.ifBlank { null }, w.mime.ifBlank { null }, w.size, dest)
+        val stream = res.stream
+        if (stream == null) {
+            blobPending.remove(token)
+            toastText(getString(R.string.blob_failed_reason, res.error ?: "?"))
+            return false
+        }
+        blobStreams[token] = stream
+        toast(R.string.download_queued)
+        return true
     }
 
     /** Dipanggil dari JavaScript (thread terpisah). Semua metode memeriksa token. */
     private inner class DownloadBridge {
 
         @JavascriptInterface
-        fun begin(token: String, name: String, mime: String, size: String) {
-            val hint = blobPending[token] ?: return
-            val stream = Downloads.beginStream(
-                this@BrowserActivity,
-                name.ifBlank { null },
-                mime.ifBlank { hint }.ifBlank { null },
-                size.toLongOrNull() ?: -1L
-            )
-            if (stream == null) {
-                blobPending.remove(token)
-                runOnUiThread { toast(R.string.blob_failed) }
-                return
+        fun begin(token: String, name: String, mime: String, size: String): String {
+            val hint = blobPending[token] ?: return "fail"
+            val finalMime = mime.ifBlank { hint }
+            val w = BlobWait(name, finalMime, size.toLongOrNull() ?: -1L)
+            val latch = java.util.concurrent.CountDownLatch(1)
+            var answer = "fail"
+            runOnUiThread {
+                try {
+                    val (shownName, shownMime) = FileNames.resolve(name.ifBlank { null }, finalMime.ifBlank { null })
+                    resolveDestOrWait(token, w, shownName, shownMime) { a ->
+                        answer = a
+                        latch.countDown()
+                    }
+                } catch (e: Throwable) {
+                    Diag.log("unduh", "begin gagal: " + Diag.err(e))
+                    latch.countDown()
+                }
             }
-            blobStreams[token] = stream
-            runOnUiThread { toast(R.string.download_queued) }
+            try {
+                latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (e: InterruptedException) {
+                // lanjut dengan jawaban terakhir
+            }
+            if (answer == "fail") blobPending.remove(token)
+            return answer
         }
 
         @JavascriptInterface
@@ -947,6 +1110,7 @@ class BrowserActivity : GlassActivity() {
             try {
                 stream.write(Base64.decode(base64, Base64.DEFAULT))
             } catch (e: Exception) {
+                Diag.log("unduh", "chunk gagal: " + Diag.err(e))
                 blobStreams.remove(token)
                 blobPending.remove(token)
                 stream.fail(e.message)
@@ -956,18 +1120,61 @@ class BrowserActivity : GlassActivity() {
         @JavascriptInterface
         fun finish(token: String) {
             blobPending.remove(token)
-            blobStreams.remove(token)?.finish()
+            val s = blobStreams.remove(token)
+            Diag.log("unduh", "blob selesai " + (s != null))
+            s?.finish()
         }
 
         @JavascriptInterface
-        fun fail(token: String) {
+        fun fail(token: String, reason: String) {
             val known = blobPending.remove(token) != null
+            blobWaiting.remove(token)
             val stream = blobStreams.remove(token)
+            Diag.log("unduh", "blob gagal dari halaman: " + reason)
             if (stream != null) {
-                stream.fail("Halaman gagal menyiapkan file")
+                stream.fail("Halaman gagal menyiapkan file: " + reason)
             } else if (known) {
-                runOnUiThread { toast(R.string.blob_failed) }
+                runOnUiThread { toastText(getString(R.string.blob_failed_reason, reason.ifBlank { "?" })) }
             }
+        }
+    }
+
+    /**
+     * Dipanggil di thread utama oleh begin(). Mode Download/folder tetap: jawab "go" langsung.
+     * Mode tanya: tampilkan picker, jawab "wait", dan lanjutkan lewat jsResume setelah dipilih.
+     */
+    private fun resolveDestOrWait(
+        token: String,
+        w: BlobWait,
+        shownName: String,
+        shownMime: String,
+        reply: (String) -> Unit
+    ) {
+        var replied = false
+        var sync = true
+        resolveDest(shownName, shownMime) { dest ->
+            if (dest == null) {
+                blobPending.remove(token)
+                blobWaiting.remove(token)
+                toast(R.string.dl_canceled)
+                if (sync) {
+                    replied = true
+                    reply("fail")
+                }
+                return@resolveDest
+            }
+            val ok = startBlob(token, w, dest)
+            if (sync) {
+                replied = true
+                reply(if (ok) "go" else "fail")
+            } else {
+                jsResume(token, ok)
+            }
+        }
+        sync = false
+        if (!replied) {
+            blobWaiting[token] = w
+            reply("wait")
         }
     }
 
@@ -992,6 +1199,10 @@ class BrowserActivity : GlassActivity() {
 
     private fun toast(resId: Int) {
         Toast.makeText(this, resId, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun toastText(text: String) {
+        Toast.makeText(this, text, Toast.LENGTH_LONG).show()
     }
 
     companion object {

@@ -216,7 +216,8 @@ class MainActivity : GlassActivity() {
         val site = SiteStore.create(this, url)
         input.setText("")
         refreshList()
-        TaskLauncher.open(this, site)
+        // Pertama kali situs ditambahkan: tanya ke mana unduhan situs ini disimpan.
+        DownloadLocation.choose(this, site, true) { TaskLauncher.open(this, site) }
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()

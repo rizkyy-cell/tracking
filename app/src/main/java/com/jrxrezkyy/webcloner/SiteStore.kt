@@ -90,9 +90,48 @@ object SiteStore {
     fun remove(c: Context, site: Site) {
         save(c, all(c).filterNot { it.id == site.id })
         prefs(c).edit().remove("desktop_${site.id}").apply()
+        setDlTree(c, site.id, null)
+        prefs(c).edit().remove("dlmode_${site.id}").apply()
         clearCustomIcon(c, site.id)
         Pwa.remove(c, site.id)
         Profiles.delete(site)
+    }
+
+    // ---- Lokasi unduhan per situs ----
+
+    const val DL_ASK = 0
+    const val DL_FOLDER = 1
+    const val DL_DEFAULT = 2
+
+    fun dlMode(c: Context, id: String): Int = prefs(c).getInt("dlmode_$id", DL_ASK)
+
+    fun setDlMode(c: Context, id: String, mode: Int) {
+        prefs(c).edit().putInt("dlmode_$id", mode).apply()
+    }
+
+    fun dlTree(c: Context, id: String): android.net.Uri? =
+        prefs(c).getString("dltree_$id", null)?.let { android.net.Uri.parse(it) }
+
+    /** Menyimpan folder tetap situs ini; izin folder lama dilepas bila diganti atau dihapus. */
+    fun setDlTree(c: Context, id: String, uri: android.net.Uri?) {
+        val old = dlTree(c, id)
+        if (old != null && old != uri) {
+            val stillUsed = all(c).any { it.id != id && dlTree(c, it.id) == old }
+            if (!stillUsed) {
+                try {
+                    c.contentResolver.releasePersistableUriPermission(
+                        old,
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                            android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    )
+                } catch (e: Exception) {
+                    // sudah tidak berlaku
+                }
+            }
+        }
+        prefs(c).edit().apply {
+            if (uri == null) remove("dltree_$id") else putString("dltree_$id", uri.toString())
+        }.apply()
     }
 
     // ---- Ikon khusus (dipilih pengguna) ----

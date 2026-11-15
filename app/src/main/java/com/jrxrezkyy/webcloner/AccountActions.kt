@@ -19,7 +19,10 @@ object AccountActions {
                 onChanged()
             }
         }
-        d.item(R.drawable.ic_pin, R.string.add_shortcut) { ShortcutHelper.pin(act, site) }
+        d.item(R.drawable.ic_folder, R.string.dl_location) {
+            DownloadLocation.choose(act, site, false) { onChanged() }
+        }
+            .item(R.drawable.ic_pin, R.string.add_shortcut) { ShortcutHelper.pin(act, site) }
             .item(R.drawable.ic_trash, R.string.clear_data, danger = true) { confirmClear(act, site) }
             .item(R.drawable.ic_trash, R.string.delete, danger = true) { confirmDelete(act, site, onChanged) }
             .show()

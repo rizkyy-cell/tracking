@@ -1,5 +1,6 @@
 package com.jrxrezkyy.webcloner
 
+import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
@@ -42,6 +43,39 @@ abstract class GlassActivity : AppCompatActivity() {
                 }
             }
         }
+
+    private var folderDone: ((Uri?) -> Unit)? = null
+
+    // Pemilih folder lewat pengelola file sistem (SAF). Pengelola file menyediakan tombol
+    // "buat folder baru", jadi folder baru bisa dibuat langsung di sana.
+    private val folderPicker =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
+            val done = folderDone
+            folderDone = null
+            if (uri != null) {
+                try {
+                    contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    )
+                } catch (e: Exception) {
+                    // izin tidak bisa dipertahankan: tetap dicoba saat menyimpan
+                }
+            }
+            done?.invoke(uri)
+        }
+
+    /** Membuka pemilih folder; [done] menerima null bila dibatalkan. */
+    fun pickFolder(done: (Uri?) -> Unit) {
+        folderDone = done
+        try {
+            folderPicker.launch(null)
+        } catch (e: Exception) {
+            folderDone = null
+            Toast.makeText(this, R.string.dl_picker_missing, Toast.LENGTH_LONG).show()
+            done(null)
+        }
+    }
 
     protected fun setGlassContent(content: View) {
         WindowCompat.setDecorFitsSystemWindows(window, false)

@@ -3,7 +3,6 @@ package com.jrxrezkyy.webcloner
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import androidx.activity.result.contract.ActivityResultContracts
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
@@ -19,23 +18,6 @@ class SettingsActivity : GlassActivity() {
 
     private lateinit var content: LinearLayout
     private var introPlayed = false
-
-    // Pemilih folder unduhan (SAF). Harus didaftarkan saat konstruksi, makanya berupa properti.
-    private val treePicker =
-        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
-            if (uri != null) {
-                try {
-                    contentResolver.takePersistableUriPermission(
-                        uri,
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                    )
-                } catch (e: Exception) {
-                    // izin tidak bisa dipertahankan: tetap dicoba saat mengunduh
-                }
-                Downloads.setTree(this, uri)
-                build()
-            }
-        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -150,15 +132,15 @@ class SettingsActivity : GlassActivity() {
         group(
             listOf(
                 row(
-                    Glass.icon(this, R.drawable.ic_folder, 22, Glass.ink(this)),
-                    getString(R.string.dl_folder), Downloads.folderLabel(this),
-                    Glass.icon(this, R.drawable.ic_chevron, 20, Glass.soft(this))
-                ) { chooseFolder() },
-                row(
                     Glass.icon(this, R.drawable.ic_install, 22, Glass.ink(this)),
                     getString(R.string.dl_title), getString(R.string.dl_list_hint),
                     Glass.icon(this, R.drawable.ic_chevron, 20, Glass.soft(this))
-                ) { startActivity(Intent(this, DownloadsActivity::class.java)) }
+                ) { startActivity(Intent(this, DownloadsActivity::class.java)) },
+                row(
+                    Glass.icon(this, R.drawable.ic_refresh, 22, Glass.ink(this)),
+                    getString(R.string.diag_title), getString(R.string.diag_row_hint),
+                    Glass.icon(this, R.drawable.ic_chevron, 20, Glass.soft(this))
+                ) { showDiagnostics() }
             )
         )
 
@@ -247,18 +229,24 @@ class SettingsActivity : GlassActivity() {
             .show()
     }
 
-    private fun chooseFolder() {
-        val dialog = GlassDialog(this)
-            .title(R.string.dl_folder)
-            .subtitle(Downloads.folderLabel(this))
-            .item(R.drawable.ic_folder, R.string.dl_folder_pick) { treePicker.launch(null) }
-        if (Downloads.treeUri(this) != null) {
-            dialog.item(R.drawable.ic_refresh, R.string.dl_folder_reset) {
-                Downloads.setTree(this, null)
-                build()
+    private fun showDiagnostics() {
+        val log = Diag.read(this)
+        val text = if (log.isBlank()) getString(R.string.diag_empty) else log
+        GlassDialog(this)
+            .title(R.string.diag_title)
+            .message(R.string.diag_hint)
+            .scrollText(text)
+            .button(R.string.diag_clear) {
+                Diag.clear(this)
+                Toast.makeText(this, R.string.diag_cleared, Toast.LENGTH_SHORT).show()
             }
-        }
-        dialog.show()
+            .button(R.string.diag_copy, GlassDialog.Kind.ACCENT) {
+                val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("Diagnostik", text))
+                Toast.makeText(this, R.string.diag_copied, Toast.LENGTH_SHORT).show()
+            }
+            .button(R.string.close)
+            .show()
     }
 
     private fun confirmClearAll() {
