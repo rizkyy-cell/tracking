@@ -243,11 +243,8 @@ class BrowserActivity : GlassActivity() {
                 SiteStore.setPullRefresh(this, on)
                 binding.swipe.isEnabled = on
             }
-            .also { d ->
-                if (manifestUrl != null) {
-                    d.item(R.drawable.ic_install, R.string.install_app) { startInstall() }
-                }
-            }
+            .item(R.drawable.ic_lock, R.string.zoom_title) { showZoomDialog() }
+            .item(R.drawable.ic_install, R.string.install_app) { startInstall() }
             .item(R.drawable.ic_open, R.string.dl_title) {
                 startActivity(Intent(this, DownloadsActivity::class.java))
             }
@@ -313,9 +310,6 @@ class BrowserActivity : GlassActivity() {
         s.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
         s.setGeolocationEnabled(true)
         s.cacheMode = WebSettings.LOAD_DEFAULT
-        s.setSupportZoom(true)
-        s.builtInZoomControls = true
-        s.displayZoomControls = false
         s.useWideViewPort = true
         applyDesktopMode(reload = false)
 
@@ -335,6 +329,116 @@ class BrowserActivity : GlassActivity() {
         webView.webViewClient = createWebViewClient()
         webView.webChromeClient = createChromeClient()
         webView.addJavascriptInterface(DownloadBridge(), BRIDGE_NAME)
+        webView.addJavascriptInterface(PwaBridge(), PWA_BRIDGE)
+    }
+
+    // ------------------------------------------------------------------ zoom & viewport
+
+    private fun screenDp(): Float {
+        val dm = resources.displayMetrics
+        val px = if (::webView.isInitialized && webView.width > 0) webView.width else dm.widthPixels
+        return px / dm.density
+    }
+
+    /** Lebar viewport (px CSS) yang dipaksakan; 0 = biarkan situs menentukan sendiri. */
+    private fun viewportWidth(): Int {
+        val desktop = SiteStore.isDesktop(this, site.id)
+        val zoom = SiteStore.zoom(this, site.id)
+        if (!desktop && zoom == 100) return 0
+        val base = if (desktop) 1280f else screenDp()
+        return Math.round(base * 100f / zoom).coerceIn(200, 4000)
+    }
+
+    /** Skrip viewport dengan nilai terkini; diisi lewat penanda %W% %S% %LOCK%. */
+    private fun viewportJs(): String {
+        val w = viewportWidth()
+        val scale = if (w > 0) (screenDp() / w).coerceIn(0.1f, 5f) else 1f
+        val lock = SiteStore.lockZoom(this, site.id)
+        return VIEWPORT_JS
+            .replace("%W%", w.toString())
+            .replace("%S%", String.format(java.util.Locale.US, "%.4f", scale))
+            .replace("%LOCK%", lock.toString())
+    }
+
+    /**
+     * Menerapkan zoom/lebar halaman dan kunci zoom. Kunci zoom mematikan pinch-zoom DAN
+     * auto-zoom ke kolom ketik (WebView hanya melakukan zoom-ke-kolom bila zoom diizinkan),
+     * jadi pandangan di editor kode tidak lagi melompat saat mengetik.
+     */
+    private fun applyViewport() {
+        val s = webView.settings
+        val lock = SiteStore.lockZoom(this, site.id)
+        s.setSupportZoom(!lock)
+        s.builtInZoomControls = !lock
+        s.displayZoomControls = false
+
+        val w = viewportWidth()
+        if (w > 0) {
+            val dm = resources.displayMetrics
+            val widthPx = if (webView.width > 0) webView.width else dm.widthPixels
+            webView.setInitialScale(((widthPx / dm.density) / w * 100f).toInt().coerceIn(10, 500))
+        } else {
+            webView.setInitialScale(0)
+        }
+
+        try {
+            desktopScript?.remove()
+        } catch (e: Exception) {
+            // abaikan
+        }
+        desktopScript = null
+        val desktop = SiteStore.isDesktop(this, site.id)
+        if (desktop || w > 0 || lock) {
+            try {
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                    desktopScript = WebViewCompat.addDocumentStartJavaScript(
+                        webView, (if (desktop) DESKTOP_JS else "") + "\n" + viewportJs(), setOf("*")
+                    )
+                }
+            } catch (e: Exception) {
+                desktopScript = null
+            }
+        }
+        // Halaman yang sedang terbuka ikut diperbarui tanpa menunggu muat ulang.
+        try {
+            webView.evaluateJavascript(viewportJs(), null)
+        } catch (e: Exception) {
+            // abaikan
+        }
+    }
+
+    private fun showZoomDialog() {
+        fun widthFor(percent: Int): Int {
+            val base = if (SiteStore.isDesktop(this, site.id)) 1280f else screenDp()
+            return Math.round(base * 100f / percent)
+        }
+        GlassDialog(this, sheet = true)
+            .title(R.string.zoom_title)
+            .subtitle(site.name)
+            .message(R.string.zoom_explain)
+            .slider(50, 250, SiteStore.zoom(this, site.id),
+                { v -> getString(R.string.zoom_label, v, widthFor(v)) }) { v ->
+                SiteStore.setZoom(this, site.id, v)
+                applyViewport()
+                webView.reload()
+            }
+            .toggle(R.drawable.ic_lock, getString(R.string.zoom_lock),
+                SiteStore.lockZoom(this, site.id), false) { on ->
+                SiteStore.setLockZoom(this, site.id, on)
+                applyViewport()
+                Toast.makeText(
+                    this,
+                    if (on) R.string.zoom_lock_on else R.string.zoom_lock_off,
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            .button(R.string.zoom_reset) {
+                SiteStore.setZoom(this, site.id, 100)
+                applyViewport()
+                webView.reload()
+            }
+            .button(R.string.close)
+            .show()
     }
 
     /**
@@ -359,12 +463,7 @@ class BrowserActivity : GlassActivity() {
                     "Chrome/$chrome Safari/537.36"
             s.useWideViewPort = true
             s.loadWithOverviewMode = true
-            // Skala awal eksplisit agar halaman selebar 1280 px langsung pas di layar.
-            val density = resources.displayMetrics.density
-            val widthPx = if (webView.width > 0) webView.width else resources.displayMetrics.widthPixels
-            webView.setInitialScale(((widthPx / density) / 1280f * 100f).toInt().coerceIn(10, 100))
         } else {
-            webView.setInitialScale(0)
             // Hapus "; wv" dan "Version/x.y" agar situs menganggapnya Chrome seluler biasa.
             s.userAgentString = defaultUserAgent
                 .replace("; wv", "")
@@ -373,23 +472,7 @@ class BrowserActivity : GlassActivity() {
             s.loadWithOverviewMode = false
         }
 
-        try {
-            desktopScript?.remove()
-        } catch (e: Exception) {
-            // abaikan
-        }
-        desktopScript = null
-        if (desktop) {
-            try {
-                if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-                    desktopScript = WebViewCompat.addDocumentStartJavaScript(
-                        webView, DESKTOP_JS, setOf("*")
-                    )
-                }
-            } catch (e: Exception) {
-                desktopScript = null
-            }
-        }
+        applyViewport()
 
         if (reload) {
             Toast.makeText(
@@ -443,26 +526,89 @@ class BrowserActivity : GlassActivity() {
         }
     }
 
+    // ---- Pengambilan lewat halaman sendiri (memakai cookie/identitas WebView, lolos WAF) ----
+
+    private class PwaWait {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        @Volatile var data: ByteArray? = null
+        @Volatile var error: String? = null
+    }
+
+    private val pwaWaits = java.util.concurrent.ConcurrentHashMap<String, PwaWait>()
+
+    private inner class PwaBridge {
+        @JavascriptInterface
+        fun ok(token: String, b64: String) {
+            val w = pwaWaits[token] ?: return
+            try {
+                w.data = Base64.decode(b64, Base64.DEFAULT)
+            } catch (e: Exception) {
+                w.error = "base64"
+            }
+            w.latch.countDown()
+        }
+
+        @JavascriptInterface
+        fun err(token: String, msg: String) {
+            val w = pwaWaits[token] ?: return
+            w.error = msg
+            w.latch.countDown()
+        }
+    }
+
+    /** BLOKIR: panggil dari thread latar. Mengambil [url] lewat fetch() di halaman. */
+    private fun pageFetch(url: String): ByteArray? {
+        val token = UUID.randomUUID().toString()
+        val w = PwaWait()
+        pwaWaits[token] = w
+        val js = "(function(){var B=window." + PWA_BRIDGE + ",T=" + JSONObject.quote(token) + ";" +
+            "try{fetch(" + JSONObject.quote(url) + ",{credentials:'include'}).then(function(r){" +
+            "if(!r.ok)throw new Error('HTTP '+r.status);return r.blob();}).then(function(b){" +
+            "var f=new FileReader();f.onload=function(){var s=String(f.result);" +
+            "B.ok(T,s.substring(s.indexOf(',')+1));};f.onerror=function(){B.err(T,'FileReader');};" +
+            "f.readAsDataURL(b);}).catch(function(e){B.err(T,String(e));});}catch(e){B.err(T,String(e));}})();"
+        runOnUiThread {
+            try {
+                webView.evaluateJavascript(js, null)
+            } catch (e: Exception) {
+                w.error = Diag.err(e)
+                w.latch.countDown()
+            }
+        }
+        try {
+            w.latch.await(12, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (e: InterruptedException) {
+            // lanjut
+        }
+        pwaWaits.remove(token)
+        if (w.data == null) Diag.log("pwa", "fetch halaman gagal: " + url.take(100) + " : " + (w.error ?: "timeout"))
+        return w.data
+    }
+
     private fun startInstall() {
-        val manifest = manifestUrl ?: return
+        val manifest = manifestUrl
         val pageUrl = webView.url ?: startUrl
         val title = pageTitle
-        val cookie = try { cookieManager.getCookie(manifest) } catch (e: Exception) { null }
+        val cookie = try { cookieManager.getCookie(manifest ?: pageUrl) } catch (e: Exception) { null }
         val ua = webView.settings.userAgentString
         Toast.makeText(this, R.string.install_preparing, Toast.LENGTH_SHORT).show()
         Thread {
-            val result = try {
-                Pwa.fetch(manifest, pageUrl, title, cookie, ua)
-            } catch (e: Exception) {
-                null
+            var result: Pwa.Result? = null
+            if (manifest != null) {
+                try {
+                    result = Pwa.fetch(manifest, pageUrl, title) { u ->
+                        pageFetch(u) ?: Pwa.nativeGet(u, cookie, ua)
+                    }
+                } catch (e: Throwable) {
+                    Diag.log("pwa", "fetch error: " + Diag.err(e))
+                }
+            } else {
+                Diag.log("pwa", "halaman tanpa manifest, pakai nama dan ikon situs")
             }
+            val finalResult = result ?: Pwa.fallback(this, pageUrl, title)
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
-                if (result == null) {
-                    Toast.makeText(this, R.string.install_failed, Toast.LENGTH_LONG).show()
-                } else {
-                    confirmInstall(result)
-                }
+                confirmInstall(finalResult)
             }
         }.start()
     }
@@ -472,13 +618,18 @@ class BrowserActivity : GlassActivity() {
         GlassDialog(this)
             .title(getString(R.string.install_title, info.shortName))
             .subtitle(UrlUtils.host(info.startUrl))
-            .message(R.string.install_message)
+            .message(if (result.fromManifest) R.string.install_message else R.string.install_message_basic)
             .button(R.string.cancel)
             .button(R.string.install_confirm, GlassDialog.Kind.ACCENT) {
                 Pwa.save(this, site.id, info, result.icon)
                 ShortcutHelper.pinApp(this, site, info)
             }
             .show()
+    }
+
+    private fun injectPageScripts(view: WebView) {
+        if (SiteStore.isDesktop(this, site.id)) view.evaluateJavascript(DESKTOP_JS, null)
+        view.evaluateJavascript(viewportJs(), null)
     }
 
     private fun createWebViewClient() = object : WebViewClient() {
@@ -491,15 +642,11 @@ class BrowserActivity : GlassActivity() {
             binding.errorGroup.visibility = View.GONE
             binding.progress.visibility = View.VISIBLE
             view.evaluateJavascript(hookJs, null)
-            if (SiteStore.isDesktop(this@BrowserActivity, site.id)) {
-                view.evaluateJavascript(DESKTOP_JS, null)
-            }
+            injectPageScripts(view)
         }
 
         override fun onPageCommitVisible(view: WebView, url: String?) {
-            if (SiteStore.isDesktop(this@BrowserActivity, site.id)) {
-                view.evaluateJavascript(DESKTOP_JS, null)
-            }
+            injectPageScripts(view)
         }
 
         override fun onPageFinished(view: WebView, url: String?) {
@@ -508,9 +655,7 @@ class BrowserActivity : GlassActivity() {
             cookieManager.flush()
             view.evaluateJavascript(hookJs, null)
             detectManifest(view)
-            if (SiteStore.isDesktop(this@BrowserActivity, site.id)) {
-                view.evaluateJavascript(DESKTOP_JS, null)
-            }
+            injectPageScripts(view)
             // Setelah pemuatan tanpa cache (saat ganti mode), kembali ke cache normal.
             if (view.settings.cacheMode != WebSettings.LOAD_DEFAULT) {
                 view.settings.cacheMode = WebSettings.LOAD_DEFAULT
@@ -1208,17 +1353,16 @@ class BrowserActivity : GlassActivity() {
     companion object {
         const val EXTRA_SITE_ID = "extra_site_id"
         private const val BRIDGE_NAME = "WCDownload"
+        private const val PWA_BRIDGE = "WCPwa"
 
         /**
-         * Skrip mode desktop. Berjalan sebelum skrip situs (document-start). Memaksa viewport
-         * selebar 1280 px lalu menjaganya sampai halaman selesai dimuat, dan menyamarkan
-         * identitas navigator sebagai Linux desktop.
+         * Skrip mode desktop. Berjalan sebelum skrip situs (document-start) dan menyamarkan
+         * identitas navigator sebagai Linux desktop. Lebar viewport diatur [VIEWPORT_JS].
          */
         private val DESKTOP_JS = """
             (function() {
               if (window.__wcD) return;
               window.__wcD = true;
-              var W = 1280;
               var def = function(o, k, v) {
                 try { Object.defineProperty(o, k, { get: function() { return v; }, configurable: true }); } catch (e) {}
               };
@@ -1238,37 +1382,81 @@ class BrowserActivity : GlassActivity() {
                   });
                 }
               } catch (e) {}
+            })();
+        """.trimIndent()
 
-              // Pada document-start, <html> belum tentu ada. Semua akses dijaga.
-              var want = 'width=' + W;
+        /**
+         * Mengatur <meta viewport>: lebar/zoom paksaan dan kunci zoom. Aman dipanggil berulang:
+         * panggilan berikutnya hanya memperbarui konfigurasi. Nilai asli meta situs disimpan
+         * sehingga bisa dipulihkan saat pengaturan dimatikan.
+         */
+        private val VIEWPORT_JS = """
+            (function() {
+              var cfg = { w: %W%, s: %S%, lock: %LOCK% };
+              var again = !!window.__wcV;
+              window.__wcV = cfg;
+              if (again) { if (window.__wcVfix) window.__wcVfix(); return; }
+              var need = function() { var c = window.__wcV; return c.w > 0 || c.lock; };
+              var build = function(orig) {
+                var c = window.__wcV, parts = [], src = String(orig || '').split(/[,;]/);
+                for (var i = 0; i < src.length; i++) {
+                  var p = src[i].trim();
+                  if (!p) continue;
+                  var k = p.split('=')[0].trim().toLowerCase();
+                  if (c.lock && k === 'user-scalable') continue;
+                  if (c.w > 0 && (k === 'width' || k === 'initial-scale' || k === 'minimum-scale' || k === 'maximum-scale')) continue;
+                  if (c.lock && k === 'maximum-scale') continue;
+                  parts.push(p);
+                }
+                if (c.w > 0) {
+                  parts.push('width=' + c.w);
+                  parts.push('initial-scale=' + c.s);
+                  if (c.lock) { parts.push('minimum-scale=' + c.s); parts.push('maximum-scale=' + c.s); }
+                }
+                if (c.lock) parts.push('user-scalable=no');
+                return parts.join(', ');
+              };
               var fix = function() {
                 try {
                   var root = document.documentElement;
                   if (!root) return;
                   var list = document.querySelectorAll('meta[name=viewport]');
                   if (!list.length) {
+                    if (!need()) return;
                     var m = document.createElement('meta');
                     m.setAttribute('name', 'viewport');
-                    m.setAttribute('content', want);
+                    var made = build('');
+                    m.setAttribute('content', made);
+                    m.__wcOrig = '';
+                    m.__wcLast = made;
                     (document.head || root).appendChild(m);
                     return;
                   }
                   for (var i = 0; i < list.length; i++) {
-                    if (list[i].getAttribute('content') !== want) list[i].setAttribute('content', want);
+                    var el = list[i];
+                    var cur = el.getAttribute('content') || '';
+                    if (el.__wcLast === undefined || cur !== el.__wcLast) el.__wcOrig = cur;
+                    var want = need() ? build(el.__wcOrig) : el.__wcOrig;
+                    if (cur !== want) el.setAttribute('content', want);
+                    el.__wcLast = want;
                   }
                 } catch (e) {}
               };
+              window.__wcVfix = fix;
               fix();
               var obs = null;
-              try {
-                obs = new MutationObserver(fix);
-                obs.observe(document, {
-                  childList: true, subtree: true, attributes: true, attributeFilter: ['content']
-                });
-              } catch (e) {}
+              var watch = function(target) {
+                try {
+                  if (obs) obs.disconnect();
+                  obs = new MutationObserver(fix);
+                  obs.observe(target, { childList: true, subtree: true, attributes: true, attributeFilter: ['content'] });
+                } catch (e) {}
+              };
+              watch(document);
               var done = function() {
                 fix();
-                setTimeout(function() { try { if (obs) obs.disconnect(); } catch (e) {} }, 2500);
+                // Setelah dimuat cukup awasi <head> (kecil), bukan seluruh dokumen.
+                setTimeout(function() { if (document.head) watch(document.head); else if (obs) obs.disconnect(); }, 2500);
               };
               if (document.readyState === 'complete') done();
               else window.addEventListener('load', done);

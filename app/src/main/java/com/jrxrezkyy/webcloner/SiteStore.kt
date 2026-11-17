@@ -91,10 +91,26 @@ object SiteStore {
         save(c, all(c).filterNot { it.id == site.id })
         prefs(c).edit().remove("desktop_${site.id}").apply()
         setDlTree(c, site.id, null)
-        prefs(c).edit().remove("dlmode_${site.id}").apply()
+        prefs(c).edit().remove("dlmode_${site.id}").remove("zoom_${site.id}").remove("lockzoom_${site.id}").apply()
         clearCustomIcon(c, site.id)
         Pwa.remove(c, site.id)
         Profiles.delete(site)
+    }
+
+    // ---- Zoom / skala halaman per situs ----
+
+    /** Persen zoom, 50..250. 100 = ukuran normal. */
+    fun zoom(c: Context, id: String): Int = prefs(c).getInt("zoom_$id", 100).coerceIn(50, 250)
+
+    fun setZoom(c: Context, id: String, percent: Int) {
+        prefs(c).edit().putInt("zoom_$id", percent.coerceIn(50, 250)).apply()
+    }
+
+    /** true = zoom (termasuk auto-zoom saat mengetik) dimatikan untuk situs ini. */
+    fun lockZoom(c: Context, id: String): Boolean = prefs(c).getBoolean("lockzoom_$id", false)
+
+    fun setLockZoom(c: Context, id: String, value: Boolean) {
+        prefs(c).edit().putBoolean("lockzoom_$id", value).apply()
     }
 
     // ---- Lokasi unduhan per situs ----

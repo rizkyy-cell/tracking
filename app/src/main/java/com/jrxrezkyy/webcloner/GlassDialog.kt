@@ -23,6 +23,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -153,6 +154,41 @@ class GlassDialog(private val ctx: Context, private val sheet: Boolean = false) 
             onChange(now)
             if (closeOnChange) dismiss()
         }
+        return this
+    }
+
+    /**
+     * Penggeser angka. Label diperbarui saat digeser; [onChange] dipanggil sekali saat jari
+     * dilepas (supaya tidak memuat ulang halaman terus-menerus).
+     */
+    fun slider(
+        min: Int, max: Int, value: Int,
+        label: (Int) -> String,
+        onChange: (Int) -> Unit
+    ): GlassDialog {
+        val text = Glass.text(ctx, label(value), 15f, ink, Glass.Weight.BOLD)
+        box.addView(text, LinearLayout.LayoutParams(Glass.MATCH, Glass.WRAP).apply {
+            topMargin = ctx.dp(12)
+        })
+        val bar = SeekBar(ctx)
+        bar.min = min
+        bar.max = max
+        bar.progress = value.coerceIn(min, max)
+        bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
+                text.text = label(p)
+            }
+
+            override fun onStartTrackingTouch(sb: SeekBar) {}
+
+            override fun onStopTrackingTouch(sb: SeekBar) {
+                onChange(sb.progress)
+            }
+        })
+        box.addView(bar, LinearLayout.LayoutParams(Glass.MATCH, Glass.WRAP).apply {
+            topMargin = ctx.dp(6)
+            bottomMargin = ctx.dp(6)
+        })
         return this
     }
 

@@ -87,7 +87,7 @@
     <string name="install_app">Instal aplikasi</string>
     <string name="install_available">Situs ini bisa diinstal. Buka menu ⋮ lalu pilih Instal aplikasi.</string>
     <string name="install_preparing">Menyiapkan aplikasi…</string>
-    <string name="install_failed">Gagal membaca data aplikasi situs ini. Coba lagi, atau pakai Tambah ke layar utama.</string>
+    <string name="install_message_basic">Situs ini tidak menyediakan data aplikasi, jadi dipakai nama dan ikon situs. Akan ditambahkan ke layar utama dan dibuka seperti aplikasi, tanpa bilah alamat.</string>
     <string name="install_title">Instal %1$s?</string>
     <string name="install_message">Akan ditambahkan ke layar utama dan dibuka seperti aplikasi, tanpa bilah alamat. Login tetap memakai akun ini.</string>
     <string name="install_confirm">Instal</string>
@@ -138,4 +138,11 @@
     <string name="diag_clear">Hapus catatan</string>
     <string name="diag_cleared">Catatan dihapus</string>
     <string name="diag_copied">Catatan disalin</string>
+    <string name="zoom_title">Zoom dan tampilan</string>
+    <string name="zoom_explain">Geser untuk memperbesar atau memperkecil halaman. Pengaturan ini hanya berlaku untuk situs ini dan memuat ulang halaman.</string>
+    <string name="zoom_label">Zoom %1$d%% (lebar halaman %2$d px)</string>
+    <string name="zoom_lock">Matikan zoom dan auto-zoom</string>
+    <string name="zoom_lock_on">Zoom dikunci. Layar tidak lompat lagi saat mengetik.</string>
+    <string name="zoom_lock_off">Zoom diizinkan kembali</string>
+    <string name="zoom_reset">Kembali 100%</string>
 </resources>

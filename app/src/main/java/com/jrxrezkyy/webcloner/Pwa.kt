@@ -102,23 +102,29 @@ object Pwa {
     }
 
     /** Hasil ambil manifest: info + gambar ikon terbaik (bila ada). */
-    class Result(val info: PwaInfo, val icon: Bitmap?)
+    class Result(val info: PwaInfo, val icon: Bitmap?, val fromManifest: Boolean = true)
 
     /**
-     * Mengambil dan membaca manifest. BLOKIR: panggil dari thread latar, bukan thread utama.
-     * [cookie] dan [userAgent] dikirim agar manifest yang butuh login tetap terbaca.
+     * Membaca manifest. BLOKIR: panggil dari thread latar. [load] mengambil isi sebuah alamat
+     * (null bila gagal); pemanggil bebas memilih caranya (lewat halaman sendiri atau langsung).
+     * Mengembalikan null bila manifest tidak terbaca; pemanggil lalu memakai [fallback].
      */
     fun fetch(
         manifestUrl: String,
         pageUrl: String,
         pageTitle: String?,
-        cookie: String?,
-        userAgent: String
+        load: (String) -> ByteArray?
     ): Result? {
-        val text = download(manifestUrl, cookie, userAgent)?.toString(Charsets.UTF_8) ?: return null
+        val bytes = load(manifestUrl)
+        if (bytes == null) {
+            Diag.log("pwa", "manifest tidak terambil: " + manifestUrl.take(120))
+            return null
+        }
+        val text = bytes.toString(Charsets.UTF_8)
         val json = try {
-            JSONObject(text.trimStart('﻿'))
+            JSONObject(text.trimStart('\uFEFF'))
         } catch (e: Exception) {
+            Diag.log("pwa", "manifest bukan JSON: " + text.take(80).replace('\n', ' '))
             return null
         }
 
@@ -183,8 +189,8 @@ object Pwa {
         var iconBmp: Bitmap? = null
         var maskable = false
         for (cand in cands.take(4)) {
-            val bytes = download(cand.url, cookie, userAgent) ?: continue
-            val bmp = decode(bytes) ?: continue
+            val data = load(cand.url) ?: continue
+            val bmp = decode(data) ?: continue
             iconBmp = bmp
             maskable = cand.maskable
             break
@@ -216,6 +222,22 @@ object Pwa {
         null
     }
 
+    /** Info cadangan bila manifest tidak terbaca: nama halaman + favicon situs. Selalu berhasil. */
+    fun fallback(c: Context, pageUrl: String, pageTitle: String?): Result {
+        val host = UrlUtils.host(pageUrl)
+        val name = pageTitle.orEmpty().trim().ifBlank { host }
+        val icon = SiteStore.favicon(c, host)
+        return Result(
+            PwaInfo(name, name.take(24), pageUrl, "standalone", null, null, false, icon != null),
+            icon,
+            false
+        )
+    }
+
+    /** Unduh langsung dari aplikasi (cadangan bila pengambilan lewat halaman gagal). */
+    fun nativeGet(url: String, cookie: String?, userAgent: String): ByteArray? =
+        download(url, cookie, userAgent)
+
     private fun download(url: String, cookie: String?, userAgent: String): ByteArray? {
         if (!url.startsWith("http://") && !url.startsWith("https://")) return null
         var conn: HttpURLConnection? = null
@@ -228,7 +250,10 @@ object Pwa {
                 setRequestProperty("Accept", "*/*")
                 if (!cookie.isNullOrBlank()) setRequestProperty("Cookie", cookie)
             }
-            if (conn.responseCode !in 200..299) return null
+            if (conn.responseCode !in 200..299) {
+                Diag.log("pwa", "HTTP " + conn.responseCode + " untuk " + url.take(100))
+                return null
+            }
             val out = ByteArrayOutputStream()
             conn.inputStream.use { input ->
                 val buf = ByteArray(8192)
@@ -241,6 +266,7 @@ object Pwa {
             }
             out.toByteArray()
         } catch (e: Exception) {
+            Diag.log("pwa", "unduh gagal: " + Diag.err(e))
             null
         } finally {
             conn?.disconnect()
