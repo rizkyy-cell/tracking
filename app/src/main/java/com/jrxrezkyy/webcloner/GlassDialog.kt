@@ -44,6 +44,7 @@ class GlassDialog(private val ctx: Context, private val sheet: Boolean = false) 
     private val box = LinearLayout(ctx)
     private var buttons: LinearLayout? = null
     private var itemCount = 0
+    private var target: LinearLayout = box
     private var closing = false
     private var presenting = false
     private var snapshot: Bitmap? = null
@@ -192,6 +193,30 @@ class GlassDialog(private val ctx: Context, private val sheet: Boolean = false) 
         return this
     }
 
+    /** Baris-baris berikutnya masuk ke area yang bisa digulir (tinggi maks. 50% layar). */
+    fun beginScroll(): GlassDialog {
+        val inner = LinearLayout(ctx)
+        inner.orientation = LinearLayout.VERTICAL
+        val sv = ScrollView(ctx)
+        sv.isVerticalScrollBarEnabled = false
+        sv.addView(inner, FrameLayout.LayoutParams(Glass.MATCH, Glass.WRAP))
+        val maxH = (ctx.resources.displayMetrics.heightPixels * 0.5f).toInt()
+        box.addView(sv, LinearLayout.LayoutParams(Glass.MATCH, Glass.WRAP).apply { topMargin = ctx.dp(6) })
+        sv.viewTreeObserver.addOnGlobalLayoutListener {
+            if (sv.layoutParams.height != maxH && inner.height > maxH) {
+                sv.layoutParams = sv.layoutParams.apply { height = maxH }
+            }
+        }
+        target = inner
+        itemCount = 0
+        return this
+    }
+
+    fun endScroll(): GlassDialog {
+        target = box
+        return this
+    }
+
     /** Teks panjang yang bisa digulir (dipakai untuk lisensi). */
     fun scrollText(text: CharSequence): GlassDialog {
         val v = Glass.text(ctx, text, 12.5f, ink)
@@ -239,7 +264,7 @@ class GlassDialog(private val ctx: Context, private val sheet: Boolean = false) 
         if (itemCount > 0) {
             val line = View(ctx)
             line.setBackgroundColor(Glass.hairline(ctx))
-            box.addView(line, LinearLayout.LayoutParams(Glass.MATCH, 1).apply { marginStart = ctx.dp(38) })
+            target.addView(line, LinearLayout.LayoutParams(Glass.MATCH, 1).apply { marginStart = ctx.dp(38) })
         }
         itemCount++
         val row = LinearLayout(ctx)
@@ -256,7 +281,7 @@ class GlassDialog(private val ctx: Context, private val sheet: Boolean = false) 
         }
         val t = Glass.text(ctx, label, 16f, color, Glass.Weight.MEDIUM)
         row.addView(t, LinearLayout.LayoutParams(0, Glass.WRAP, 1f).apply { marginStart = ctx.dp(16) })
-        box.addView(row, LinearLayout.LayoutParams(Glass.MATCH, Glass.WRAP))
+        target.addView(row, LinearLayout.LayoutParams(Glass.MATCH, Glass.WRAP))
         return row
     }
 

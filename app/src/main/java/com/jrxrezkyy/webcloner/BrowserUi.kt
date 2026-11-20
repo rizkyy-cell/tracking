@@ -31,6 +31,7 @@ class BrowserUi(private val activity: BrowserActivity) {
     val retryButton = GlassButton(activity, activity.getString(R.string.retry))
     val fullscreenContainer = FrameLayout(activity)
     val mainGroup = LinearLayout(activity)
+    val stage = DeviceFrameLayout(activity)
 
     val bar = GlassPanel(activity)
     val closeButton: ImageView
@@ -116,7 +117,8 @@ class BrowserUi(private val activity: BrowserActivity) {
         })
         card.addView(errorGroup, FrameLayout.LayoutParams(Glass.MATCH, Glass.MATCH))
 
-        mainGroup.addView(card, LinearLayout.LayoutParams(Glass.MATCH, 0, 1f))
+        stage.addView(card, FrameLayout.LayoutParams(Glass.MATCH, Glass.MATCH))
+        mainGroup.addView(stage, LinearLayout.LayoutParams(Glass.MATCH, 0, 1f))
 
         // ---- lapisan layar penuh untuk video
         fullscreenContainer.setBackgroundColor(Color.BLACK)

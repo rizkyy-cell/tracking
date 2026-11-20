@@ -91,7 +91,7 @@ object SiteStore {
         save(c, all(c).filterNot { it.id == site.id })
         prefs(c).edit().remove("desktop_${site.id}").apply()
         setDlTree(c, site.id, null)
-        prefs(c).edit().remove("dlmode_${site.id}").remove("zoom_${site.id}").remove("lockzoom_${site.id}").apply()
+        prefs(c).edit().remove("dlmode_${site.id}").remove("zoom_${site.id}").remove("lockzoom_${site.id}").remove("device_${site.id}").remove("devland_${site.id}").remove("devcw_${site.id}").remove("devch_${site.id}").apply()
         clearCustomIcon(c, site.id)
         Pwa.remove(c, site.id)
         Profiles.delete(site)
@@ -111,6 +111,31 @@ object SiteStore {
 
     fun setLockZoom(c: Context, id: String, value: Boolean) {
         prefs(c).edit().putBoolean("lockzoom_$id", value).apply()
+    }
+
+    // ---- Tampilan perangkat per situs ----
+
+    /** Id perangkat tiruan (lihat [Devices]) atau null = tanpa bingkai. */
+    fun device(c: Context, id: String): String? = prefs(c).getString("device_$id", null)
+
+    fun setDevice(c: Context, id: String, deviceId: String?) {
+        prefs(c).edit().apply {
+            if (deviceId == null) remove("device_$id") else putString("device_$id", deviceId)
+        }.apply()
+    }
+
+    fun deviceLandscape(c: Context, id: String): Boolean = prefs(c).getBoolean("devland_$id", false)
+
+    fun setDeviceLandscape(c: Context, id: String, value: Boolean) {
+        prefs(c).edit().putBoolean("devland_$id", value).apply()
+    }
+
+    fun customW(c: Context, id: String): Int = prefs(c).getInt("devcw_$id", 1280)
+
+    fun customH(c: Context, id: String): Int = prefs(c).getInt("devch_$id", 720)
+
+    fun setCustomSize(c: Context, id: String, w: Int, h: Int) {
+        prefs(c).edit().putInt("devcw_$id", w).putInt("devch_$id", h).apply()
     }
 
     // ---- Lokasi unduhan per situs ----

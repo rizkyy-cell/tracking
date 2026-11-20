@@ -62,6 +62,10 @@ class BrowserActivity : GlassActivity() {
 
     private var desktopScript: ScriptHandler? = null
 
+    // Tampilan perangkat (bingkai HP/tablet/laptop/monitor); null = tanpa bingkai.
+    private var device: DevicePreset? = null
+    private var deviceLandscape = false
+
     // Instal aplikasi (PWA): true bila dibuka dari ikon hasil Instal.
     private var appMode = false
     private var pwa: PwaInfo? = null
@@ -155,6 +159,13 @@ class BrowserActivity : GlassActivity() {
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         )
         webView = binding.webView
+        device = if (appMode) null else Devices.forSite(this, site.id)
+        deviceLandscape = SiteStore.deviceLandscape(this, site.id)
+        binding.stage.setDevice(device, deviceLandscape)
+        binding.stage.onScreenChanged = { _, _ ->
+            // Ukuran layar perangkat berubah (mis. keyboard): skala ikut disesuaikan tanpa muat ulang.
+            if (device != null) applyViewport()
+        }
 
         if (appMode) applyStandaloneUi()
         updateTaskDescription(SiteStore.favicon(this, host))
@@ -243,6 +254,7 @@ class BrowserActivity : GlassActivity() {
                 SiteStore.setPullRefresh(this, on)
                 binding.swipe.isEnabled = on
             }
+            .item(R.drawable.ic_desktop, R.string.device_title) { showDeviceDialog() }
             .item(R.drawable.ic_lock, R.string.zoom_title) { showZoomDialog() }
             .item(R.drawable.ic_install, R.string.install_app) { startInstall() }
             .item(R.drawable.ic_open, R.string.dl_title) {
@@ -342,6 +354,8 @@ class BrowserActivity : GlassActivity() {
 
     /** Lebar viewport (px CSS) yang dipaksakan; 0 = biarkan situs menentukan sendiri. */
     private fun viewportWidth(): Int {
+        val dev = device
+        if (dev != null) return if (deviceLandscape && dev.rotatable) dev.h else dev.w
         val desktop = SiteStore.isDesktop(this, site.id)
         val zoom = SiteStore.zoom(this, site.id)
         if (!desktop && zoom == 100) return 0
@@ -358,6 +372,24 @@ class BrowserActivity : GlassActivity() {
             .replace("%W%", w.toString())
             .replace("%S%", String.format(java.util.Locale.US, "%.4f", scale))
             .replace("%LOCK%", lock.toString())
+            .replace("%MIN%", (device != null).toString())
+    }
+
+    /** true bila halaman harus tampil sebagai desktop (mode desktop atau perangkat laptop/monitor). */
+    private fun effDesktop(): Boolean {
+        val dev = device
+        return if (dev != null) dev.os == DeviceOs.DESKTOP else SiteStore.isDesktop(this, site.id)
+    }
+
+    /** Skrip penyamar identitas navigator sesuai perangkat; kosong bila tidak perlu. */
+    private fun platformJs(): String {
+        val dev = device
+        return when {
+            dev != null && dev.os == DeviceOs.IOS ->
+                IOS_JS.replace("%P%", if (dev.kind == DeviceKind.TABLET) "iPad" else "iPhone")
+            effDesktop() -> DESKTOP_JS
+            else -> ""
+        }
     }
 
     /**
@@ -376,7 +408,7 @@ class BrowserActivity : GlassActivity() {
         if (w > 0) {
             val dm = resources.displayMetrics
             val widthPx = if (webView.width > 0) webView.width else dm.widthPixels
-            webView.setInitialScale(((widthPx / dm.density) / w * 100f).toInt().coerceIn(10, 500))
+            webView.setInitialScale(((widthPx / dm.density) / w * 100f).toInt().coerceIn(1, 500))
         } else {
             webView.setInitialScale(0)
         }
@@ -387,12 +419,12 @@ class BrowserActivity : GlassActivity() {
             // abaikan
         }
         desktopScript = null
-        val desktop = SiteStore.isDesktop(this, site.id)
-        if (desktop || w > 0 || lock) {
+        val platform = platformJs()
+        if (platform.isNotEmpty() || w > 0 || lock) {
             try {
                 if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                     desktopScript = WebViewCompat.addDocumentStartJavaScript(
-                        webView, (if (desktop) DESKTOP_JS else "") + "\n" + viewportJs(), setOf("*")
+                        webView, platform + "\n" + viewportJs(), setOf("*")
                     )
                 }
             } catch (e: Exception) {
@@ -409,35 +441,123 @@ class BrowserActivity : GlassActivity() {
 
     private fun showZoomDialog() {
         fun widthFor(percent: Int): Int {
-            val base = if (SiteStore.isDesktop(this, site.id)) 1280f else screenDp()
+            val base = if (effDesktop()) 1280f else screenDp()
             return Math.round(base * 100f / percent)
         }
-        GlassDialog(this, sheet = true)
+        val d = GlassDialog(this, sheet = true)
             .title(R.string.zoom_title)
             .subtitle(site.name)
-            .message(R.string.zoom_explain)
-            .slider(50, 250, SiteStore.zoom(this, site.id),
-                { v -> getString(R.string.zoom_label, v, widthFor(v)) }) { v ->
-                SiteStore.setZoom(this, site.id, v)
-                applyViewport()
-                webView.reload()
-            }
-            .toggle(R.drawable.ic_lock, getString(R.string.zoom_lock),
-                SiteStore.lockZoom(this, site.id), false) { on ->
-                SiteStore.setLockZoom(this, site.id, on)
-                applyViewport()
-                Toast.makeText(
-                    this,
-                    if (on) R.string.zoom_lock_on else R.string.zoom_lock_off,
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-            .button(R.string.zoom_reset) {
+        if (device != null) {
+            d.message(R.string.zoom_device_note)
+        } else {
+            d.message(R.string.zoom_explain)
+                .slider(50, 250, SiteStore.zoom(this, site.id),
+                    { v -> getString(R.string.zoom_label, v, widthFor(v)) }) { v ->
+                    SiteStore.setZoom(this, site.id, v)
+                    applyViewport()
+                    webView.reload()
+                }
+        }
+        d.toggle(R.drawable.ic_lock, getString(R.string.zoom_lock),
+            SiteStore.lockZoom(this, site.id), false) { on ->
+            SiteStore.setLockZoom(this, site.id, on)
+            applyViewport()
+            Toast.makeText(
+                this,
+                if (on) R.string.zoom_lock_on else R.string.zoom_lock_off,
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+        if (device == null) {
+            d.button(R.string.zoom_reset) {
                 SiteStore.setZoom(this, site.id, 100)
                 applyViewport()
                 webView.reload()
             }
-            .button(R.string.close)
+        }
+        d.button(R.string.close).show()
+    }
+
+    // ------------------------------------------------------------------ tampilan perangkat
+
+    private fun deviceLabel(dev: DevicePreset): String =
+        dev.name + " (" + dev.w + "\u00D7" + dev.h + ")"
+
+    /** Terapkan pilihan perangkat: bingkai, User-Agent, lebar layar, lalu muat ulang tanpa cache. */
+    private fun commitDevice() {
+        device = if (appMode) null else Devices.forSite(this, site.id)
+        deviceLandscape = SiteStore.deviceLandscape(this, site.id)
+        binding.stage.setDevice(device, deviceLandscape)
+        applyDesktopMode(reload = false)
+        // Muat ulang setelah ukuran layar baru terpasang, supaya skala awal benar.
+        val vto = binding.stage.viewTreeObserver
+        vto.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                val o = binding.stage.viewTreeObserver
+                if (o.isAlive) o.removeOnGlobalLayoutListener(this)
+                if (isFinishing || isDestroyed) return
+                applyViewport()
+                webView.settings.cacheMode = WebSettings.LOAD_NO_CACHE
+                webView.loadUrl(webView.url ?: startUrl)
+            }
+        })
+    }
+
+    private fun chooseDevice(id: String?) {
+        SiteStore.setDevice(this, site.id, id)
+        commitDevice()
+    }
+
+    private fun showDeviceDialog() {
+        val current = device
+        val d = GlassDialog(this, sheet = true)
+            .title(R.string.device_title)
+            .subtitle(if (current != null) deviceLabel(current) else getString(R.string.device_none))
+            .message(R.string.device_explain)
+            .choice(getString(R.string.device_none), current == null) { chooseDevice(null) }
+            .item(R.drawable.ic_info, R.string.device_group_android) { showDeviceGroup(Devices.GROUP_ANDROID) }
+            .item(R.drawable.ic_info, R.string.device_group_ios) { showDeviceGroup(Devices.GROUP_IOS) }
+            .item(R.drawable.ic_desktop, R.string.device_group_desktop) { showDeviceGroup(Devices.GROUP_DESKTOP) }
+            .item(R.drawable.ic_edit, R.string.device_custom) { showCustomDevice() }
+        if (current == null || current.rotatable) {
+            d.toggle(R.drawable.ic_refresh, getString(R.string.device_rotate),
+                deviceLandscape, false) { on ->
+                SiteStore.setDeviceLandscape(this, site.id, on)
+                if (SiteStore.device(this, site.id) != null) commitDevice()
+            }
+        }
+        d.button(R.string.close).show()
+    }
+
+    private fun showDeviceGroup(group: Int) {
+        val title = when (group) {
+            Devices.GROUP_ANDROID -> R.string.device_group_android
+            Devices.GROUP_IOS -> R.string.device_group_ios
+            else -> R.string.device_group_desktop
+        }
+        val currentId = SiteStore.device(this, site.id)
+        val d = GlassDialog(this, sheet = true).title(title).beginScroll()
+        for (p in Devices.inGroup(group)) {
+            d.choice(deviceLabel(p), currentId == p.id) { chooseDevice(p.id) }
+        }
+        d.endScroll()
+            .button(R.string.back) { showDeviceDialog() }
+            .show()
+    }
+
+    private fun showCustomDevice() {
+        var w = SiteStore.customW(this, site.id)
+        var h = SiteStore.customH(this, site.id)
+        GlassDialog(this, sheet = true)
+            .title(R.string.device_custom)
+            .message(R.string.device_custom_hint)
+            .slider(240, 3840, w, { v -> getString(R.string.device_width, v) }) { v -> w = v }
+            .slider(320, 2160, h, { v -> getString(R.string.device_height, v) }) { v -> h = v }
+            .button(R.string.cancel)
+            .button(R.string.device_apply, GlassDialog.Kind.ACCENT) {
+                SiteStore.setCustomSize(this, site.id, w, h)
+                chooseDevice(Devices.CUSTOM_ID)
+            }
             .show()
     }
 
@@ -452,32 +572,34 @@ class BrowserActivity : GlassActivity() {
      * identitas navigator disamarkan sebagai Linux desktop.
      */
     private fun applyDesktopMode(reload: Boolean) {
-        val desktop = SiteStore.isDesktop(this, site.id)
+        val dev = device
+        val desktop = effDesktop()
         val s = webView.settings
 
-        if (desktop) {
-            val chrome = Regex("Chrome/([\\d.]+)").find(defaultUserAgent)?.groupValues?.get(1)
-                ?: "120.0.0.0"
-            s.userAgentString =
+        // Hapus "; wv" dan "Version/x.y" agar situs menganggapnya Chrome seluler biasa.
+        val mobileUa = defaultUserAgent
+            .replace("; wv", "")
+            .replace(Regex("Version/\\d+(\\.\\d+)*\\s"), "")
+        val chrome = Regex("Chrome/([\\d.]+)").find(defaultUserAgent)?.groupValues?.get(1)
+            ?: "120.0.0.0"
+        s.userAgentString = when {
+            dev != null && dev.os == DeviceOs.IOS && dev.kind == DeviceKind.TABLET -> IPAD_UA
+            dev != null && dev.os == DeviceOs.IOS -> IPHONE_UA
+            desktop ->
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
                     "Chrome/$chrome Safari/537.36"
-            s.useWideViewPort = true
-            s.loadWithOverviewMode = true
-        } else {
-            // Hapus "; wv" dan "Version/x.y" agar situs menganggapnya Chrome seluler biasa.
-            s.userAgentString = defaultUserAgent
-                .replace("; wv", "")
-                .replace(Regex("Version/\\d+(\\.\\d+)*\\s"), "")
-            s.useWideViewPort = true
-            s.loadWithOverviewMode = false
+            dev != null && dev.kind == DeviceKind.TABLET -> mobileUa.replace(" Mobile", "")
+            else -> mobileUa
         }
+        s.useWideViewPort = true
+        s.loadWithOverviewMode = desktop || dev != null
 
         applyViewport()
 
         if (reload) {
             Toast.makeText(
                 this,
-                if (desktop) "Mode desktop aktif" else "Mode desktop nonaktif",
+                if (SiteStore.isDesktop(this, site.id)) "Mode desktop aktif" else "Mode desktop nonaktif",
                 Toast.LENGTH_SHORT
             ).show()
             s.cacheMode = WebSettings.LOAD_NO_CACHE
@@ -628,7 +750,8 @@ class BrowserActivity : GlassActivity() {
     }
 
     private fun injectPageScripts(view: WebView) {
-        if (SiteStore.isDesktop(this, site.id)) view.evaluateJavascript(DESKTOP_JS, null)
+        val platform = platformJs()
+        if (platform.isNotEmpty()) view.evaluateJavascript(platform, null)
         view.evaluateJavascript(viewportJs(), null)
     }
 
@@ -1355,6 +1478,28 @@ class BrowserActivity : GlassActivity() {
         private const val BRIDGE_NAME = "WCDownload"
         private const val PWA_BRIDGE = "WCPwa"
 
+        private const val IPHONE_UA =
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 " +
+                "(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+        private const val IPAD_UA =
+            "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 " +
+                "(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+
+        /** Menyamarkan identitas navigator sebagai Safari di iPhone/iPad. */
+        private val IOS_JS = """
+            (function() {
+              if (window.__wcI) return;
+              window.__wcI = true;
+              var def = function(o, k, v) {
+                try { Object.defineProperty(o, k, { get: function() { return v; }, configurable: true }); } catch (e) {}
+              };
+              def(Navigator.prototype, 'platform', '%P%');
+              def(Navigator.prototype, 'vendor', 'Apple Computer, Inc.');
+              def(Navigator.prototype, 'maxTouchPoints', 5);
+              def(Navigator.prototype, 'userAgentData', undefined);
+            })();
+        """.trimIndent()
+
         /**
          * Skrip mode desktop. Berjalan sebelum skrip situs (document-start) dan menyamarkan
          * identitas navigator sebagai Linux desktop. Lebar viewport diatur [VIEWPORT_JS].
@@ -1392,7 +1537,7 @@ class BrowserActivity : GlassActivity() {
          */
         private val VIEWPORT_JS = """
             (function() {
-              var cfg = { w: %W%, s: %S%, lock: %LOCK% };
+              var cfg = { w: %W%, s: %S%, lock: %LOCK%, m: %MIN% };
               var again = !!window.__wcV;
               window.__wcV = cfg;
               if (again) { if (window.__wcVfix) window.__wcVfix(); return; }
@@ -1412,6 +1557,7 @@ class BrowserActivity : GlassActivity() {
                   parts.push('width=' + c.w);
                   parts.push('initial-scale=' + c.s);
                   if (c.lock) { parts.push('minimum-scale=' + c.s); parts.push('maximum-scale=' + c.s); }
+                  else if (c.m) { parts.push('minimum-scale=' + c.s); }
                 }
                 if (c.lock) parts.push('user-scalable=no');
                 return parts.join(', ');

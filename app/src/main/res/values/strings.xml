@@ -145,4 +145,17 @@
     <string name="zoom_lock_on">Zoom dikunci. Layar tidak lompat lagi saat mengetik.</string>
     <string name="zoom_lock_off">Zoom diizinkan kembali</string>
     <string name="zoom_reset">Kembali 100%</string>
+    <string name="device_title">Tampilan perangkat</string>
+    <string name="device_none">Layar HP ini (tanpa bingkai)</string>
+    <string name="device_explain">Buka situs seperti di perangkat lain, lengkap dengan bingkainya. Pilihan berlaku untuk situs ini.</string>
+    <string name="device_group_android">Android</string>
+    <string name="device_group_ios">iPhone dan iPad</string>
+    <string name="device_group_desktop">Laptop dan monitor PC</string>
+    <string name="device_custom">Ukuran kustom</string>
+    <string name="device_custom_hint">Atur lebar dan tinggi layar (px), lalu terapkan.</string>
+    <string name="device_width">Lebar %1$d px</string>
+    <string name="device_height">Tinggi %1$d px</string>
+    <string name="device_apply">Terapkan</string>
+    <string name="device_rotate">Putar (mendatar)</string>
+    <string name="zoom_device_note">Saat tampilan perangkat aktif, ukuran halaman mengikuti perangkat yang dipilih. Slider zoom tidak dipakai.</string>
 </resources>
